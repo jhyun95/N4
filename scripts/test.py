@@ -23,10 +23,9 @@ def main():
     TEST_BATCH = 1000
     LEARNING_RATE = 0.01
     MOMENTUM = 0.5
-    EPOCHS = 1
+    WEIGHT_DECAY = 1e-5
+    EPOCHS = 10
     LOG_INTERVAL = 25  
-#    args = parser.parse_args()
-#    print(args)
 #    torch.manual_seed(args.seed)  
 #    if CUDA:
 #        torch.cuda.manual_seed(args.seed)
@@ -44,15 +43,22 @@ def main():
         batch_size=TEST_BATCH, shuffle=True, **kwargs)
     
     ''' Model training epochs '''
-    model = models.LinNet()
+    model = models.BaseNet()
 #    if CUDA:
 #        model.cuda()
     optimizer = optim.SGD(model.parameters(), lr=LEARNING_RATE, momentum=MOMENTUM)
+#                          weight_decay=WEIGHT_DECAY)
     for epoch in range(1, EPOCHS + 1):
         train(model, train_loader, optimizer, epoch, LOG_INTERVAL)
         test(model, test_loader)
         
+    MODEL_PATH = '../models/BaseNet_E10'
+    torch.save(model.state_dict(), MODEL_PATH)
+#    model = models.LinNet()
+#    model.load_state_dict(torch.load(MODEL_PATH))
+        
 def train(model, train_loader, optimizer, epoch, log_interval):
+    ''' Training step '''
     model.train()
     for batch_idx, (data, target) in enumerate(train_loader):
 #        if args.CUDA:
@@ -69,6 +75,7 @@ def train(model, train_loader, optimizer, epoch, log_interval):
                 100. * batch_idx / len(train_loader), loss.data[0]))
 
 def test(model, test_loader):
+    ''' Testing step '''
     model.eval()
     test_loss = 0
     correct = 0

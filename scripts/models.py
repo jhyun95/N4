@@ -24,14 +24,15 @@ class LinNet(nn.Module):
         self.lin1 = nn.Linear(784,112)
         self.lin2 = nn.Linear(112,16)
         self.lin3 = nn.Linear(16,10)
-#        self.lin4 = nn.Linear(4,1)
+#        self.lin1 = l0module.L0Linear(784,112)
+#        self.lin2 = l0module.L0Linear(112,16)
+#        self.lin3 = l0module.L0Linear(16,10)
         
     def forward(self, x):
         x = x.view(-1,784)
-        x = F.tanh(self.lin1(x))
-        x = F.tanh(self.lin2(x))
-        x = F.log_softmax(self.lin3(x))
-#        x = F.tanh(self.lin4(x))
+        x = self.lin1(x); x = F.relu(x)
+        x = self.lin2(x); x = F.relu(x)
+        x = self.lin3(x); x = F.log_softmax(x)
         return x
 
 class BaseNet(nn.Module):
