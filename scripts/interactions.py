@@ -8,24 +8,31 @@ Created on Mon Apr  9 16:52:13 2018
 from __future__ import print_function
 import torch
 from torchvision import datasets, transforms
-from torch.autograd import Variable
+
+import numpy as np
 import models
 import random, time, os
 
 torch.manual_seed(1) # FIXED SEED FOR REPRODUCIBILITY
 DIM = 28 # images are 28x28
+TOTAL_IMAGES = 10000 # total number of images
 MODEL = models.BaseNet()
 MODEL.load_state_dict(torch.load("../models/BaseNet_E10"))
 OUTPUT_1ST = '../data/1st_order_seed_1.tsv'
 OUTPUT_2ND = '../data/2nd_order_seed_1.tsv'
 
+def main():
+    #third_order_test()
+    #find_lethal_pixels()
+    #find_2nd_order_interactions()
+    find_pixel_correlations(labelset=0, output_file='../data/pixel_corr_0s.csv.gz')
+
 def test_threeway(model,data,p1,p2,p3):
     ''' Test all possible perturbations based on 3 pixels '''
-    get_pixels = lambda p: (p % DIM, int((p-p%DIM)/DIM))
     pixel_sets = [ [], [p1], [p2], [p3], [p1,p2], [p1,p3], [p2,p3], [p1,p2,p3] ]
     predictions = {}
     for pixel_set in pixel_sets:
-        pixels = tuple(map(get_pixels, pixel_set))
+        pixels = tuple(map(get_pixel, pixel_set))
         corrupted = apply_corruptions(data, pixels)
         predictions[pixels] = get_prediction(model, corrupted)
     return predictions
@@ -57,8 +64,62 @@ def hex_to_image(hexstring):
     bitstring = list(map(int, list(bitstring)))
     data = torch.FloatTensor(list(bitstring))
     data = data.view(1,1,DIM,DIM)
-    data = Variable(data, volatile=True)
+    data = torch.autograd.Variable(data, volatile=True)
     return data
+
+def get_pixel(p):
+    ''' Maps integer from 0 to DIM*DIM-1 to pixel coordinates '''
+    return (p % DIM, int((p-p%DIM)/DIM))
+
+def find_pixel_correlations(model=MODEL, labelset=2, check_consistency=True,
+                            output_file='pixel_corr.csv'):
+    ''' Create pairwise pixel correlations for either all images, or for 
+        a particular label (i.e. 2s only). Uses model-generated labels, 
+        not actual labels. Checks for consistency by default, i.e. 
+        model labels = actual labels.
+        NOTE: Correlation between two pixels = 2 * # matches / # images,
+        since pixel data is binary (black/white) '''
+        
+    ''' First find images that match the desired label '''
+    test_loader = torch.utils.data.DataLoader(
+        datasets.MNIST('../data', train=False, download=True, 
+                       transform=transforms.Compose(models.transform_list())),
+        batch_size=1, shuffle=False)  
+        
+    model.eval(); images = []
+    start_time = time.time()
+    print('Loading images that match:', labelset)
+    for data, target in test_loader:
+        data = torch.autograd.Variable(data, volatile=True)
+        target = torch.autograd.Variable(target)
+        output = model(data)
+        weight, base_pred = torch.max(output, 1)
+        if labelset == None or int(base_pred) == labelset:
+            if int(target) == labelset or not check_consistency:
+                images.append(data.view(DIM,DIM)) # flatted to 2D tensor
+    N = len(images)
+    print('Loaded', N, 'images.')
+    images = torch.stack(images)
+    
+    ''' Compute pairwise pixel correlations for black and white images
+        NOTE: Simply takes the 2*(# times pixels equal) / (# images) - 1'''    
+    correlations = np.zeros(shape=(DIM*DIM,DIM*DIM))
+    for p1 in range(DIM*DIM):
+        print('Pixel #:', p1+1, 'of', DIM*DIM)        
+        correlations[p1,p1] = 1.0 # self correlation
+        x1,y1 = get_pixel(p1)
+        px1data = images[:,x1,y1].data.cpu().numpy().astype(bool)
+        for p2 in range(p1):
+            x2,y2 = get_pixel(p2)
+            px2data = images[:,x2,y2].data.cpu().numpy().astype(bool)
+            mismatches = sum(np.logical_xor(px1data, px2data))
+            matches = N - mismatches
+            correlation = 2.0 * matches / N - 1.0
+            correlations[p1,p2] = correlation
+            correlations[p2,p1] = correlation
+    
+    np.savetxt(output_file, correlations, delimiter=',', newline='\n')
+    print('Time (seconds):', round(time.time() - start_time, 3))
 
 def find_2nd_order_interactions(model=MODEL, first_order_file=OUTPUT_1ST,
                                 output_file = OUTPUT_2ND):
@@ -66,7 +127,6 @@ def find_2nd_order_interactions(model=MODEL, first_order_file=OUTPUT_1ST,
         prediction = actual label), scan pairs of pixels for interactions:
         - If either pixel is lethal, but the combined is not = Positive 
         - If neither pixel is lethal, but combined is = Negative '''
-    get_pixel = lambda p: (p % DIM, int((p-p%DIM)/DIM))
     
     ''' Extract only consistent images with 1st-order interactions '''
     f = open(first_order_file,'r+')
@@ -145,16 +205,16 @@ def find_lethal_pixels(model=MODEL, output_file=OUTPUT_1ST):
     ''' For each image, swap every pixel one at a time to see 
         if the prediction is altered / image is corrupted '''
     test_loader = torch.utils.data.DataLoader(
-    datasets.MNIST('../data', train=False, download=True, 
-                   transform=transforms.Compose(models.transform_list())),
-    batch_size=1, shuffle=False)  
-    get_pixel = lambda p: (p % DIM, int((p-p%DIM)/DIM))
+        datasets.MNIST('../data', train=False, download=True, 
+                       transform=transforms.Compose(models.transform_list())),
+        batch_size=1, shuffle=False)  
     
     model.eval(); image_counter = 0
     lethal_pixels = {}
     for data, target in test_loader:
         image_counter += 1
-        data, target = Variable(data, volatile=True), Variable(target)
+        data = torch.autograd.Variable(data, volatile=True)
+        target = torch.autograd.Variable(target)
         image_hex = image_to_hex(data)
         output = model(data)
         weight, base_pred = torch.max(output, 1)
@@ -182,15 +242,16 @@ def find_lethal_pixels(model=MODEL, output_file=OUTPUT_1ST):
 def third_order_test(model=MODEL):
     ''' Randomly test images for threeway interactions '''
     test_loader = torch.utils.data.DataLoader(
-    datasets.MNIST('../data', train=False, download=True, 
-                   transform=transforms.Compose(models.transform_list())),
-    batch_size=1, shuffle=False)
+        datasets.MNIST('../data', train=False, download=True, 
+                       transform=transforms.Compose(models.transform_list())),
+        batch_size=1, shuffle=False)
 
     model.eval()
     image_counter = 0
     for data, target in test_loader:
         image_counter += 1
-        data, target = Variable(data, volatile=True), Variable(target)
+        data = torch.autograd.Variable(data, volatile=True)
+        target = torch.autograd.Variable(target)
         output = model(data)
         weight, base_pred = torch.max(output, 1)
         print('Image', image_counter, 'Label:', int(target),  'Predicted:', int(base_pred))
@@ -205,7 +266,6 @@ def third_order_test(model=MODEL):
                 corrupted = len(set(results.values())) > 1 # more than one predicted output
                 if corrupted:
                     print(results)
-
-#third_order_test()
-#find_lethal_pixels()
-find_2nd_order_interactions()
+                    
+if __name__ == '__main__':
+    main()
