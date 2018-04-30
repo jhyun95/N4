@@ -9,9 +9,11 @@ from __future__ import print_function
 import torch
 from torchvision import datasets, transforms
 
+import matplotlib.pyplot as plt
+import seaborn as sns
 import numpy as np
 import models
-import random, time, os
+import random, time, os, multiprocessing
 
 torch.manual_seed(1) # FIXED SEED FOR REPRODUCIBILITY
 DIM = 28 # images are 28x28
@@ -20,28 +22,42 @@ MODEL = models.BaseNet()
 MODEL.load_state_dict(torch.load("../models/BaseNet_E10"))
 OUTPUT_1ST = '../data/1st_order_seed_1.tsv'
 OUTPUT_2ND = '../data/2nd_order_seed_1.tsv'
+CORR_DIR = '../data/pixel_correlations/'
 
 def main():
-    #third_order_test()
-    #find_lethal_pixels()
-    #find_2nd_order_interactions()
-    find_pixel_correlations(labelset=0, output_file='../data/pixel_corr_0s.csv.gz')
+#    third_order_test()
+#    find_lethal_pixels()
+#    find_2nd_order_interactions()
+    
+    compute_pixel_correlations_parallel(mode='mcc-adj')
+    
+#    heatmap_correlation(CORR_DIR + 'pixel_sokal_michener_0s.csv.gz'); plt.figure()
+#    heatmap_correlation(CORR_DIR + 'pixel_mcc_0s.csv.gz'); plt.figure()
+#    heatmap_correlation(CORR_DIR + 'pixel_mcc_adj_0s.csv.gz')
+    
+def compute_pixel_correlations_parallel(sets=range(10), mode='mcc-adj', cpus=2):
+    ''' Compute pixel correlations for a given mode and all labelsets,
+        based on find_pixel_correlations '''
+    pool = multiprocessing.Pool(cpus)
+    pool_data = map(lambda i: (i,mode), sets)
+    pool.map(__pixel_correlation_helper__, pool_data)
 
-def test_threeway(model,data,p1,p2,p3):
-    ''' Test all possible perturbations based on 3 pixels '''
-    pixel_sets = [ [], [p1], [p2], [p3], [p1,p2], [p1,p3], [p2,p3], [p1,p2,p3] ]
-    predictions = {}
-    for pixel_set in pixel_sets:
-        pixels = tuple(map(get_pixel, pixel_set))
-        corrupted = apply_corruptions(data, pixels)
-        predictions[pixels] = get_prediction(model, corrupted)
-    return predictions
+def __pixel_correlation_helper__(i_mode):
+    ''' Helper function for parallelized pixel correlation calculation '''
+    i,mode = i_mode
+    filename = CORR_DIR + 'pixel_' +mode.replace('-','_') 
+    filename += '_' + str(i) + 's.csv.gz'
+    find_pixel_correlations(labelset=i, mode=mode, output_file=filename)
+    
+def heatmap_correlation(data_file):
+    ''' Heatmap of pixel correlation data '''
+    data = np.loadtxt(data_file, delimiter=',')
+    sns.heatmap(data, vmin=-1, vmax=1, cmap='RdBu')
     
 def get_prediction(model, data):
     ''' Gets the predicted number for an image represented as a 1x1xDIMxDIM tensor'''
     output = model(data)
     weight, pred = torch.max(output,1)
-    return int(pred)
     
 def apply_corruptions(data, pixels):
     ''' Flips pixels in an image represented as a 1x1xDIMxDIM tensor '''
@@ -72,13 +88,18 @@ def get_pixel(p):
     return (p % DIM, int((p-p%DIM)/DIM))
 
 def find_pixel_correlations(model=MODEL, labelset=2, check_consistency=True,
-                            output_file='pixel_corr.csv'):
+                            mode='sokal-michener', output_file='pixel_corr.csv'):
     ''' Create pairwise pixel correlations for either all images, or for 
         a particular label (i.e. 2s only). Uses model-generated labels, 
         not actual labels. Checks for consistency by default, i.e. 
         model labels = actual labels.
-        NOTE: Correlation between two pixels = 2 * # matches / # images,
-        since pixel data is binary (black/white) '''
+        
+        Refer to http://www.iiisci.org/journal/CV$/sci/pdfs/GS315JG.pdf for 
+        more possible metrics for correlating binary variables:
+            sokal-michener = 2 * # matches / # images - 1.0 (scaled onto [-1,1])
+            mcc = matthews correlation coefficient (equivalent to pearson)
+            mcc-adj = mcc, but add 1 to each FP, FN, TP, TN to avoid 0 denom
+    '''
         
     ''' First find images that match the desired label '''
     test_loader = torch.utils.data.DataLoader(
@@ -105,18 +126,29 @@ def find_pixel_correlations(model=MODEL, labelset=2, check_consistency=True,
         NOTE: Simply takes the 2*(# times pixels equal) / (# images) - 1'''    
     correlations = np.zeros(shape=(DIM*DIM,DIM*DIM))
     for p1 in range(DIM*DIM):
-        print('Pixel #:', p1+1, 'of', DIM*DIM)        
+        print('Image Set:', labelset, 'Pixel #:', p1+1, 'of', DIM*DIM)        
         correlations[p1,p1] = 1.0 # self correlation
         x1,y1 = get_pixel(p1)
         px1data = images[:,x1,y1].data.cpu().numpy().astype(bool)
         for p2 in range(p1):
             x2,y2 = get_pixel(p2)
             px2data = images[:,x2,y2].data.cpu().numpy().astype(bool)
-            mismatches = sum(np.logical_xor(px1data, px2data))
-            matches = N - mismatches
-            correlation = 2.0 * matches / N - 1.0
-            correlations[p1,p2] = correlation
-            correlations[p2,p1] = correlation
+            if mode == 'sokal-michener':  
+                mismatches = np.sum(np.logical_xor(px1data, px2data), dtype=np.int64)
+                matches = N - mismatches
+                corr = 2.0 * matches / N - 1.0
+            elif mode == 'mcc' or mode == 'mcc-adj':
+                a = np.sum(np.logical_and(px1data, px2data), dtype=np.int64) # both white
+                b = np.sum(px1data, dtype=np.int64) - a # white/black
+                c = np.sum(px2data, dtype=np.int64) - a # black/white
+                d = N - a - b - c # both black
+                if mode == 'mcc-adj': # pseudocounts
+                    a += 1; b += 1; c += 1; d += 1
+                numer = (a+d) - (b+c)
+                denom = (a+b)*(a+c)*(b+d)*(c+d)
+                corr = numer/denom**0.5 if denom > 0 else 0.0
+            correlations[p1,p2] = corr
+            correlations[p2,p1] = corr
     
     np.savetxt(output_file, correlations, delimiter=',', newline='\n')
     print('Time (seconds):', round(time.time() - start_time, 3))
@@ -266,6 +298,16 @@ def third_order_test(model=MODEL):
                 corrupted = len(set(results.values())) > 1 # more than one predicted output
                 if corrupted:
                     print(results)
+                    
+def test_threeway(model,data,p1,p2,p3):
+    ''' Test all possible perturbations based on 3 pixels '''
+    pixel_sets = [ [], [p1], [p2], [p3], [p1,p2], [p1,p3], [p2,p3], [p1,p2,p3] ]
+    predictions = {}
+    for pixel_set in pixel_sets:
+        pixels = tuple(map(get_pixel, pixel_set))
+        corrupted = apply_corruptions(data, pixels)
+        predictions[pixels] = get_prediction(model, corrupted)
+    return predictions
                     
 if __name__ == '__main__':
     main()

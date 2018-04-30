@@ -1,2 +1,3 @@
 *.pyc
 misc/*
+data/pixel_correlations/*
