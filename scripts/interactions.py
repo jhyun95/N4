@@ -29,7 +29,9 @@ def main():
 #    find_lethal_pixels()
 #    find_2nd_order_interactions()
     
-    compute_pixel_correlations_parallel(mode='mcc-adj')
+    compute_pixel_correlations_parallel(sets=range(10), mode='mcc', cpus=2)
+    compute_pixel_correlations_parallel(sets=range(10), mode='mcc-adj', cpus=2)
+#    find_pixel_correlations(mode='mcc')
     
 #    heatmap_correlation(CORR_DIR + 'pixel_sokal_michener_0s.csv.gz'); plt.figure()
 #    heatmap_correlation(CORR_DIR + 'pixel_mcc_0s.csv.gz'); plt.figure()
@@ -88,7 +90,7 @@ def get_pixel(p):
     return (p % DIM, int((p-p%DIM)/DIM))
 
 def find_pixel_correlations(model=MODEL, labelset=2, check_consistency=True,
-                            mode='sokal-michener', output_file='pixel_corr.csv'):
+                            mode='sokal-michener', output_file=None):
     ''' Create pairwise pixel correlations for either all images, or for 
         a particular label (i.e. 2s only). Uses model-generated labels, 
         not actual labels. Checks for consistency by default, i.e. 
@@ -122,8 +124,7 @@ def find_pixel_correlations(model=MODEL, labelset=2, check_consistency=True,
     print('Loaded', N, 'images.')
     images = torch.stack(images)
     
-    ''' Compute pairwise pixel correlations for black and white images
-        NOTE: Simply takes the 2*(# times pixels equal) / (# images) - 1'''    
+    ''' Compute pairwise pixel correlations for black and white images '''    
     correlations = np.zeros(shape=(DIM*DIM,DIM*DIM))
     for p1 in range(DIM*DIM):
         print('Image Set:', labelset, 'Pixel #:', p1+1, 'of', DIM*DIM)        
@@ -144,14 +145,18 @@ def find_pixel_correlations(model=MODEL, labelset=2, check_consistency=True,
                 d = N - a - b - c # both black
                 if mode == 'mcc-adj': # pseudocounts
                     a += 1; b += 1; c += 1; d += 1
-                numer = (a+d) - (b+c)
+                numer = (a*d) - (b*c)
                 denom = (a+b)*(a+c)*(b+d)*(c+d)
-                corr = numer/denom**0.5 if denom > 0 else 0.0
+                corr = (numer*numer/denom)**0.5 if denom > 0 else 0.0
+                if np.abs(corr) > 1.0: # rounding error?
+                    print('WARNING:',corr,a,b,c,d)
             correlations[p1,p2] = corr
             correlations[p2,p1] = corr
     
-    np.savetxt(output_file, correlations, delimiter=',', newline='\n')
+    if output_file != None:
+        np.savetxt(output_file, correlations, delimiter=',', newline='\n')
     print('Time (seconds):', round(time.time() - start_time, 3))
+    return correlations
 
 def find_2nd_order_interactions(model=MODEL, first_order_file=OUTPUT_1ST,
                                 output_file = OUTPUT_2ND):
