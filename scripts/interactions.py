@@ -28,66 +28,34 @@ def main():
 #    third_order_test()
 #    find_lethal_pixels()
 #    find_2nd_order_interactions()
-    
-    compute_pixel_correlations_parallel(sets=range(10), mode='mcc', cpus=2)
-    compute_pixel_correlations_parallel(sets=range(10), mode='mcc-adj', cpus=2)
-#    find_pixel_correlations(mode='mcc')
+
+    ''' Pixel Hierarchy Extraction '''
+#    find_pixel_correlations_parallel(sets=range(10), mode='sokal-michener', cpus=2)
+#    find_pixel_correlations_parallel(sets=range(10), mode='mcc', cpus=2)
+    find_pixel_correlations_parallel(sets=range(10), mode='mcc-adj', cpus=2)
     
 #    heatmap_correlation(CORR_DIR + 'pixel_sokal_michener_0s.csv.gz'); plt.figure()
 #    heatmap_correlation(CORR_DIR + 'pixel_mcc_0s.csv.gz'); plt.figure()
 #    heatmap_correlation(CORR_DIR + 'pixel_mcc_adj_0s.csv.gz')
     
-def compute_pixel_correlations_parallel(sets=range(10), mode='mcc-adj', cpus=2):
+def heatmap_correlation(correlation_data_file):
+    ''' Heatmap of pixel correlation data '''
+    data = np.loadtxt(correlation_data_file, delimiter=',')
+    sns.heatmap(data, vmin=-1, vmax=1, cmap='RdBu')
+    
+def find_pixel_correlations_parallel(sets=range(10), mode='mcc-adj', cpus=2):
     ''' Compute pixel correlations for a given mode and all labelsets,
         based on find_pixel_correlations '''
+    def __pixel_correlation_helper__(i_mode):
+        ''' Helper function for parallelized pixel correlation calculation '''
+        i,mode = i_mode
+        filename = CORR_DIR + 'pixel_' +mode.replace('-','_') 
+        filename += '_' + str(i) + 's.csv.gz'
+        find_pixel_correlations(labelset=i, mode=mode, output_file=filename)
+        
     pool = multiprocessing.Pool(cpus)
     pool_data = map(lambda i: (i,mode), sets)
     pool.map(__pixel_correlation_helper__, pool_data)
-
-def __pixel_correlation_helper__(i_mode):
-    ''' Helper function for parallelized pixel correlation calculation '''
-    i,mode = i_mode
-    filename = CORR_DIR + 'pixel_' +mode.replace('-','_') 
-    filename += '_' + str(i) + 's.csv.gz'
-    find_pixel_correlations(labelset=i, mode=mode, output_file=filename)
-    
-def heatmap_correlation(data_file):
-    ''' Heatmap of pixel correlation data '''
-    data = np.loadtxt(data_file, delimiter=',')
-    sns.heatmap(data, vmin=-1, vmax=1, cmap='RdBu')
-    
-def get_prediction(model, data):
-    ''' Gets the predicted number for an image represented as a 1x1xDIMxDIM tensor'''
-    output = model(data)
-    weight, pred = torch.max(output,1)
-    
-def apply_corruptions(data, pixels):
-    ''' Flips pixels in an image represented as a 1x1xDIMxDIM tensor '''
-    mod_data = data.clone()
-    for r,c in pixels:
-        mod_data[0,0,r,c] = 1 - data[0,0,r,c]
-    return mod_data
-
-def image_to_hex(data):
-    ''' Converts 28x28 binary image to hex string '''
-    collapsed = data.view(DIM*DIM) # convert to 1D
-    bits = map(lambda px: str(int(px)), collapsed) # convert to 0s and 1s
-    bitstring = ''.join(list(bits)) # concatenate to bitstring
-    return hex(int(bitstring,2)) # return hex object
-
-def hex_to_image(hexstring):
-    ''' Converts hexstring to 28x28 binary image (1x1x28x28 tensor) '''
-    bitstring = bin(int(hexstring,16))[2:] # convert to binary string
-    bitstring = '0' * (DIM*DIM-len(bitstring)) + bitstring # pad zeros
-    bitstring = list(map(int, list(bitstring)))
-    data = torch.FloatTensor(list(bitstring))
-    data = data.view(1,1,DIM,DIM)
-    data = torch.autograd.Variable(data, volatile=True)
-    return data
-
-def get_pixel(p):
-    ''' Maps integer from 0 to DIM*DIM-1 to pixel coordinates '''
-    return (p % DIM, int((p-p%DIM)/DIM))
 
 def find_pixel_correlations(model=MODEL, labelset=2, check_consistency=True,
                             mode='sokal-michener', output_file=None):
@@ -129,10 +97,10 @@ def find_pixel_correlations(model=MODEL, labelset=2, check_consistency=True,
     for p1 in range(DIM*DIM):
         print('Image Set:', labelset, 'Pixel #:', p1+1, 'of', DIM*DIM)        
         correlations[p1,p1] = 1.0 # self correlation
-        x1,y1 = get_pixel(p1)
+        x1,y1 = __get_pixel__(p1)
         px1data = images[:,x1,y1].data.cpu().numpy().astype(bool)
         for p2 in range(p1):
-            x2,y2 = get_pixel(p2)
+            x2,y2 = __get_pixel__(p2)
             px2data = images[:,x2,y2].data.cpu().numpy().astype(bool)
             if mode == 'sokal-michener':  
                 mismatches = np.sum(np.logical_xor(px1data, px2data), dtype=np.int64)
@@ -206,14 +174,16 @@ def find_2nd_order_interactions(model=MODEL, first_order_file=OUTPUT_1ST,
         print('Image', image_counter, '(' + str(base) + ')', hexstring)
         if not hexstring in already_run: # check if there is already an entry for this image
             start_time = time.time()
-            data = hex_to_image(hexstring) # to pytorch tensor
+            data = __hex_to_image__(hexstring) # to pytorch tensor
             positive_interactions = []; negative_interactions = []
             for i in range(DIM*DIM): # pixel 1
-                px1 = get_pixel(i); is_lethal1 = px1 in lethal_pixels[hexstring]
-                for j in range(i): # pixel 2
-                    px2 = get_pixel(j); is_lethal2 = px2 in lethal_pixels[hexstring]
-                    corrupted = apply_corruptions(data, [px1, px2])
-                    double_swap = get_prediction(model, corrupted)
+                px1 = __get_pixel__(i)
+                is_lethal1 = px1 in lethal_pixels[hexstring]
+                for j in __get_pixel__(i): # pixel 2
+                    px2 = __get_pixel__(j)
+                    is_lethal2 = px2 in lethal_pixels[hexstring]
+                    corrupted = __apply_corruptions__(data, [px1, px2])
+                    double_swap = __get_prediction__(model, corrupted)
                     is_lethal12 = double_swap != base
                     if is_lethal1 or is_lethal2: # either one is lethal
                         if not is_lethal12: # but both is not = POSITIVE interaction
@@ -240,7 +210,8 @@ def find_2nd_order_interactions(model=MODEL, first_order_file=OUTPUT_1ST,
 
 def find_lethal_pixels(model=MODEL, output_file=OUTPUT_1ST):
     ''' For each image, swap every pixel one at a time to see 
-        if the prediction is altered / image is corrupted '''
+        if the prediction is altered / image is corrupted.
+        Essentially a search for 1st order interactions '''
     test_loader = torch.utils.data.DataLoader(
         datasets.MNIST('../data', train=False, download=True, 
                        transform=transforms.Compose(models.transform_list())),
@@ -252,15 +223,15 @@ def find_lethal_pixels(model=MODEL, output_file=OUTPUT_1ST):
         image_counter += 1
         data = torch.autograd.Variable(data, volatile=True)
         target = torch.autograd.Variable(target)
-        image_hex = image_to_hex(data)
+        image_hex = __image_to_hex__(data)
         output = model(data)
         weight, base_pred = torch.max(output, 1)
         target = int(target); base_pred = int(base_pred)
         print('Image', image_counter, 'Label:', target,  'Predicted:', base_pred)
         for px in range(DIM*DIM):
-            pixel = get_pixel(px)
-            corrupted = apply_corruptions(data, [pixel])
-            pred = get_prediction(model, corrupted)
+            pixel = __get_pixel__(px)
+            corrupted = __apply_corruptions__(data, [pixel])
+            pred = __get_prediction__(model, corrupted)
             if pred != base_pred: # if image was corrupted
                 print('LETHAL:', image_counter, base_pred, pred, pixel)
                 if not image_hex in lethal_pixels:
@@ -275,9 +246,43 @@ def find_lethal_pixels(model=MODEL, output_file=OUTPUT_1ST):
         output += '\t' + ';'.join(map(str,pixels))
         f.write('\n' + output) 
     f.close()
+    
+def __get_prediction__(model, data):
+    ''' Gets the predicted number for an image represented as a 1x1xDIMxDIM tensor'''
+    output = model(data)
+    weight, pred = torch.max(output,1)
+    
+def __apply_corruptions__(data, pixels):
+    ''' Flips pixels in an image represented as a 1x1xDIMxDIM tensor '''
+    mod_data = data.clone()
+    for r,c in pixels:
+        mod_data[0,0,r,c] = 1 - data[0,0,r,c]
+    return mod_data
+
+def __image_to_hex__(data):
+    ''' Converts 28x28 binary image to hex string '''
+    collapsed = data.view(DIM*DIM) # convert to 1D
+    bits = map(lambda px: str(int(px)), collapsed) # convert to 0s and 1s
+    bitstring = ''.join(list(bits)) # concatenate to bitstring
+    return hex(int(bitstring,2)) # return hex object
+
+def __hex_to_image__(hexstring):
+    ''' Converts hexstring to 28x28 binary image (1x1x28x28 tensor) '''
+    bitstring = bin(int(hexstring,16))[2:] # convert to binary string
+    bitstring = '0' * (DIM*DIM-len(bitstring)) + bitstring # pad zeros
+    bitstring = list(map(int, list(bitstring)))
+    data = torch.FloatTensor(list(bitstring))
+    data = data.view(1,1,DIM,DIM)
+    data = torch.autograd.Variable(data, volatile=True)
+    return data
+
+def __get_pixel__(p):
+    ''' Maps integer from 0 to DIM*DIM-1 to pixel coordinates '''
+    return (p % DIM, int((p-p%DIM)/DIM))
 
 def third_order_test(model=MODEL):
-    ''' Randomly test images for threeway interactions '''
+    ''' Randomly test images for threeway interactions.
+        Initial exploratory approach. '''
     test_loader = torch.utils.data.DataLoader(
         datasets.MNIST('../data', train=False, download=True, 
                        transform=transforms.Compose(models.transform_list())),

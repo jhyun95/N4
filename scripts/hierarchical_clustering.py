@@ -10,6 +10,8 @@ import matplotlib.pyplot as plt
 import networkx as nx
 # For viz, needs pygraphviz
 # https://stackoverflow.com/questions/40528048/pip-install-pygraphviz-no-package-libcgraph-found
+# pip install pygraphviz --install-option="--include-path=/usr/include/graphviz" 
+# --install-option="--library-path=/usr/lib/graphviz/"
 
 def hierarchial_clustering(D, p_threshold, min_cluster_size, 
                            plot_dendrogram=False,
@@ -105,5 +107,4 @@ def hierarchial_clustering(D, p_threshold, min_cluster_size,
 data_file = '../data/pixel_correlations/pixel_mcc_adj_3s.csv.gz'
 corr = np.loadtxt(data_file, delimiter=',')
 distances = np.max(corr) - np.abs(corr)
-
-adj, assoc, Z = hierarchial_clustering(distances, 0.05, 2, False, True)
+adj, assoc, Z = hierarchial_clustering(distances, 0.05, 5, False, True)
