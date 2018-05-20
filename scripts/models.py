@@ -41,7 +41,7 @@ def main():
         batch_size=TEST_BATCH, shuffle=True, **kwargs)
     
     ''' Model training epochs, PICK MODEL TYPE HERE '''
-    model = BaseNet() 
+    model = ConvNet() 
 #    if CUDA:
 #        model.cuda()
     optimizer = optim.SGD(model.parameters(), lr=LEARNING_RATE, momentum=MOMENTUM)# weight_decay=WEIGHT_DECAY)
@@ -169,16 +169,13 @@ class StnNet(nn.Module):
         xs = xs.view(-1, 10 * 3 * 3)
         theta = self.fc_loc(xs)
         theta = theta.view(-1, 2, 3)
-
         grid = F.affine_grid(theta, x.size())
         x = F.grid_sample(x, grid)
-
         return x
 
     def forward(self, x):
         # transform the input
         x = self.stn(x)
-
         # Perform the usual forward pass
         x = F.relu(F.max_pool2d(self.conv1(x), 2))
         x = F.relu(F.max_pool2d(self.conv2_drop(self.conv2(x)), 2))
