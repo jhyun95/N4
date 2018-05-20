@@ -13,6 +13,66 @@ import networkx as nx
 # pip install pygraphviz --install-option="--include-path=/usr/include/graphviz" 
 # --install-option="--library-path=/usr/lib/graphviz/"
 
+def main():
+    data_file = '../data/pixel_correlations/pixel_mcc_adj_3s.csv.gz'
+    corr = np.loadtxt(data_file, delimiter=',')
+    distances = np.max(corr) - np.abs(corr)
+    adj, assoc = hierarchial_clustering(distances, 0.05, 10, False, True)
+    
+def merge_branches(adj, assoc):
+    ''' Merges long linear branches into single nodes '''
+    
+    n0 = adj.shape[0]
+    ''' Compute which groups of nodes lie on linear branches and should be merged '''
+    merge_groups = []
+    for node in range(n0):
+        parent = __get_parent__(node, adj)
+        if parent != None:
+            if len(__get_children__(parent, adj)) == 1: 
+                ''' If parent has only one child, merge '''
+                merged = False
+                for group in merge_groups:
+                    if node in group or parent in group: # merge to existing group
+                        group.add(node); group.add(parent)
+                        merged = True; break
+                if not merged:
+                    merge_groups.append(set([node, parent]))
+    
+    ''' Using merge groupings, re-index to preserve original node ordering '''
+    reindex = {}; all_merged = set()
+    removed_indices = []
+    for group in merge_groups: # map groups to the earliest index in group
+        remap = min(group) 
+        for node in group:
+            reindex[node] = remap
+            all_merged.add(node)
+    for node in range(n0): # retain unmapped indices
+        if not node in all_merged:
+            reindex[node] = node
+        elif not node in reindex.values():
+            removed_indices.append(node)
+            
+    ''' Create adjacency matrix with merged nodes '''
+    new_adj = np.zeros((n0,n0))
+    for i in range(n0): # reindex original adjacency matrix
+        for j in range(n0):
+            new_adj[ reindex[i], reindex[j] ] = np.logical_or( \
+                new_adj[ reindex[i], reindex[j] ], adj[i,j])
+    for i in reversed(removed_indices): # remove unused indices
+        new_adj = np.delete(new_adj, i, axis=0)
+        new_adj = np.delete(new_adj, i, axis=1)
+    for i in range(new_adj.shape[0]): # remove self edges
+        new_adj[i,i] = 0 
+    
+    ''' Update associations '''
+    new_assoc = np.zeros(np.shape(assoc))
+    for i in range(n0):
+        new_assoc[reindex[i], :] = np.logical_or( \
+            new_assoc[reindex[i], :], assoc[i,:])
+    for i in reversed(removed_indices):
+        new_assoc = np.delete(new_assoc, i, axis=0)
+    return new_adj, new_assoc    
+
 def hierarchial_clustering(D, p_threshold, min_cluster_size, 
                            plot_dendrogram=False,
                            plot_ontology=False):
@@ -83,28 +143,67 @@ def hierarchial_clustering(D, p_threshold, min_cluster_size,
     nterm = assoc.shape[0]
     time4 = time.time()
     print('Prune ontology takes', time4 - time3,'seconds')
-    print('Cluster adjacencies:', adj.shape)
-    print('Cluster associations:', assoc.shape)
+    print('Before Branch Merging:')
+    print('    Cluster adjacencies:', adj.shape)
+    print('    Cluster associations:', assoc.shape)
+    print('    Hierarchy depth:', __get_hierarchy_depth__(adj, assoc))
+    adj_merged, assoc_merged = merge_branches(adj, assoc)
+    print('After Branch Merging:')
+    print('    Cluster adjacencies:', adj_merged.shape)
+    print('    Cluster associations:', assoc_merged.shape)
+    print('    Hierarchy depth:', __get_hierarchy_depth__(adj_merged, assoc_merged))
+    adj = adj_merged; assoc = assoc_merged
     
     ''' Visualize ontology '''
     if plot_ontology:
+        ''' Draw graph hierarchy '''
+        plt.figure()
         nclust, _ = adj.shape
         G = nx.from_numpy_matrix(adj)
         clust_sizes = np.sum(assoc, 1)
         labels = {}
         for i in range(nclust):
-            labels[i] = str(int(clust_sizes[i]))
+            labels[i] = str(i) + ":\n" + str(int(clust_sizes[i]))
         try: # if pygraphviz is available
             layout = nx.drawing.nx_agraph.graphviz_layout(G, prog='dot')
             nx.draw(G, pos=layout, arrows=True, node_size=400, 
-                    with_labels=True, labels=labels)    
+                    with_labels=True, labels=labels, font_size=10)    
         except ImportError:
             print('No pygraphviz, using spring layout')
-            nx.draw_spring(G, arrows=True, node_size=400, with_labels=True, labels=labels)    
-        
-    return adj, assoc, Z
+            nx.draw_spring(G, iterations=400, arrows=True, node_size=400, 
+                           with_labels=True, labels=labels, font_size=10)
+    return adj, assoc
 
-data_file = '../data/pixel_correlations/pixel_mcc_adj_3s.csv.gz'
-corr = np.loadtxt(data_file, delimiter=',')
-distances = np.max(corr) - np.abs(corr)
-adj, assoc, Z = hierarchial_clustering(distances, 0.05, 5, False, True)
+def __get_parent__(node, adj):
+    ''' Get the parent of a node in a tree from an adjacency matrix '''
+    parent = np.nonzero(adj[:,node])[0]
+    parent = parent[0] if len(parent) > 0 else None
+    return parent
+
+def __get_children__(node, adj, as_list=False):
+    ''' Get the children of a node in a tree from an adjacency matrix '''
+    children = np.nonzero(adj[node,:])[0]
+    if as_list: # convert from numpy array to python list
+        children = children.tolist()
+    return children
+
+def __get_hierarchy_depth__(adj, assoc):
+    ''' Finds the depth of the hierarhcy '''
+    num_clusters, num_obj = assoc.shape
+    clust_sizes = np.sum(assoc, 1)
+    for i in range(num_clusters):
+        if clust_sizes[i] == num_obj:
+            root = i; break
+    
+    node_depths = {root:0}
+    unvisited = __get_children__(root, adj, True)
+    while len(unvisited) > 0:
+        node = unvisited.pop()
+        if not node in node_depths: # unvisited
+            depth = node_depths[__get_parent__(node, adj)] + 1
+            node_depths[node] = depth
+            unvisited += __get_children__(node, adj, True)
+    return max(node_depths.values())
+    
+if __name__ == '__main__':
+    main()
