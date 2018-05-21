@@ -5,6 +5,9 @@ Created on Mon Apr  9 03:13:28 2018
 @author: jhyun_000
 """
 
+import sys
+import numpy as np
+import networkx as nx
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -13,6 +16,9 @@ from torch.autograd import Variable
 import torch.optim as optim
 #from mkl import set_num_threads
 #set_num_threads(4)
+
+import interactions
+import hierarchical_clustering as hc
 
 def main():
     # Training settings   
@@ -33,11 +39,11 @@ def main():
     kwargs = {}
     train_loader = torch.utils.data.DataLoader(
         datasets.MNIST('../data', train=True, download=True, 
-                       transform=transforms.Compose(transform_list())),
+                       transform=transforms.Compose(transform_black_and_white())),
         batch_size=INPUT_BATCH, shuffle=True, **kwargs)
     test_loader = torch.utils.data.DataLoader(
         datasets.MNIST('../data', train=False, download=True, 
-                       transform=transforms.Compose(transform_list())),
+                       transform=transforms.Compose(transform_black_and_white())),
         batch_size=TEST_BATCH, shuffle=True, **kwargs)
     
     ''' Model training epochs, PICK MODEL TYPE HERE '''
@@ -53,7 +59,7 @@ def main():
 #    model.load_state_dict(torch.load('../models/ConvNet_E10'))
         
 def train_model(model, train_loader, optimizer, epoch, log_interval):
-    ''' Training step '''
+    ''' Training step for number predictor model '''
     model.train()
     for batch_idx, (data, target) in enumerate(train_loader):
 #        if args.CUDA:
@@ -70,7 +76,7 @@ def train_model(model, train_loader, optimizer, epoch, log_interval):
                 100. * batch_idx / len(train_loader), loss.data[0]))
 
 def test_model(model, test_loader):
-    ''' Testing step '''
+    ''' Testing step for number predictor model '''
     model.eval()
     test_loss = 0
     correct = 0
@@ -88,13 +94,165 @@ def test_model(model, test_loader):
         test_loss, correct, len(test_loader.dataset),
         100. * correct / len(test_loader.dataset)))
 
+def transform_black_and_white():
+    ''' Grayscale image to black and white. Used for all true models '''
+    return [transforms.ToTensor(), lambda x: x > 0.5, lambda x: x.float()]
+
 def transform_default():
     ''' Image scaling, suggested in tutorial. Not used '''
     return [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
 
-def transform_list():
-    ''' Grayscale image to black and white. Used for all models '''
-    return [transforms.ToTensor(), lambda x: x > 0.5, lambda x: x.float()]
+def generate_all_single_KOs(base, true_model):
+    ''' Generates training data where a single pixel is flipped.
+        Used for DCell testing model. '''
+    pass
+
+def generate_all_double_KOs(base, true_model, fraction, seed=1):
+    ''' Generates training data where two pixels are flipped. Seed determines
+        the which double KOs are used. Used for DCell testing model. '''
+    pass
+
+def generate_multiple_KOs(base, true_model, count, seed=1):
+    ''' Generates a fixed number of training data where a certain number
+        of pixels are flipped. Seed determines which KOs are generated.
+        Used for DCell testing model. '''
+    pass
+
+def make_dcellnet_for_label(true_model, label=2, correlation_data_file=None,
+                            p_threshold=0.05, min_cluster_size=10):
+    ''' Get pixel correlations for the label subset of images '''
+    if correlation_data_file == None: # no precomputed correlations
+        correlations = interactions.find_pixel_correlations(
+                true_model, labelset=label, check_consistency=True,
+                mode='mcc-adj', output_file=None)
+    else: # precomputed correlation values
+        correlations = np.loadtxt(correlation_data_file, delimiter=',')
+        
+    ''' Construct pixel hierarchy. Removes overlapping pixel associations
+        for a simpler model (unique_associations=True) '''
+    distances = np.max(correlations) - np.abs(correlations)
+    root, adj, assoc, unique_assoc = hc.hierarchical_clustering(
+            distances, p_threshold, min_cluster_size, 
+            merge_linear_branches=True, unique_associations=True,
+            plot_dendrogram=False, plot_ontology=False)
+    
+    ''' Format hierarchy for DCellNet object '''
+    num_terms, num_elements = assoc.shape
+    dG = nx.DiGraph(adj)
+    term_size_map = {}; term_element_map = {}
+    for i in range(num_terms):
+        term = str(i) # convert to string, but probably can take ints directly
+        ''' Use non-unique associations for term size, since this only
+            dictates the number of neurons assigned to this term '''
+        term_size_map[term] = np.sum(assoc[i,:]) 
+        ''' Use unique associations for element mapping, to avoid objects
+            inputting into every term in the hierarchy (i.e. using non-unique
+            associations would have the root neuron set receive num_elements + 
+            all children outputs as its input) '''
+        mapped_elements = np.nonzero(unique_assoc[i,:])[0] # unique associations
+        term_element_map[term] = set(mapped_elements)
+        
+    return DCellNet(term_size_map, term_element_map, dG, num_elements, root)
+
+
+class DCellNet(nn.Module):
+    ''' Adapted from jisoo's DCell code, via majianzhu '''
+
+    def __init__(self, term_size_map, term_element_map, dG, num_elements, root):
+        ''' Takes ngene inputs as a 1D tensor, returns a single output.
+            NOTE: The model will be different based on whether or not elements
+            are mapped only once, or if they are mapped to a term as well as
+            all of its parent terms, as specificed in term_element_map.
+            Mapping only once gives a simpler model.
+            
+            term_size_map : dict {term label: term size}, exclusively for neuron counts
+            term_element_map : dict {term label: set(elements)}, 
+            dG: networkx DiGraph, adjacency matrix for hierarchy
+            ngene: int, number of elements (not number of terms) 
+            root: obj, label of root cluster '''
+        super(DCellNet, self).__init__()
+        self.root = root
+        self.term_element_map = term_element_map # renamed from term_direct_gene_map
+        self.feature_dim = num_elements
+        self.term_dim_map = {} # number of neurons assigned to each term
+        self.term_layer_list = [] # list of layers (one per hierarchy depth, computation order)
+        self.term_child_map = {} # term to child terms, renamed from term_neighbor_map
+        self.calculate_term_dim(term_size_map)  
+        self.construct_direct_input_layers()
+        self.construct_NN_graph(dG)
+
+    def calculate_term_dim(self, term_size_map): # renamed from cal_term_dim
+        ''' Initializes number of neurons per ontology term, based on term size '''
+        for term, term_size in term_size_map.items():
+            self.term_dim_map[term] = max( 15, int( 0.3 * term_size))
+
+    def construct_direct_input_layers(self): # renamed from contruct_direct_gene_layer
+        ''' Constructs linear input layers for all terms. Reduces full input
+            tensor to only the relevant inputs for each node. '''
+        for term, elements in self.term_element_map.items():
+            if len(elements) == 0:
+                print('There are no directed associated elements for term', term)
+                sys.exit(1)
+            self.add_module(term+'_direct_input_layer', nn.Linear(self.feature_dim, len(elements)))
+
+    def construct_NN_graph(self, dG):
+        ''' Constructs linear layers to form neural network hierarchy '''
+        for term in dG.nodes():
+            self.term_child_map[term] = []
+            for child in dG.neighbors(term):
+                self.term_child_map[term].append(child)
+
+        leaves = [n for n,d in dG.out_degree() if d==0]
+        while len(leaves) > 0:
+            self.term_layer_list.append(leaves)
+            for term in leaves:
+                input_size = 0
+                for child in self.term_child_map[term]: # from child terms  
+                    input_size += self.term_dim_map[child]
+                if term in self.term_element_map: # directly mapped elements
+                    input_size += len(self.term_element_map[term])
+                term_hidden = self.term_dim_map[term] # num neurons = output dim
+                self.add_module(term+'_linear_layer', nn.Linear(input_size, term_hidden))
+                self.add_module(term+'_batchnorm_layer', nn.BatchNorm1d(term_hidden))
+                self.add_module(term+'_aux_linear_layer1', nn.Linear(term_hidden,1))
+                self.add_module(term+'_aux_linear_layer2', nn.Linear(1,1))
+    
+            dG.remove_nodes_from(leaves)
+            leaves = [n for n,d in dG.out_degree() if d==0]
+
+    def forward(self, x):
+        ''' Forward calculation for training and prediction '''
+        term_out_map = {} # renamed from term_gene_out_map
+        for term, _ in self.term_element_map.items():
+            term_out_map[term] = self._modules[term + '_direct_input_layer'](x) 
+
+        term_NN_out_map = {} # direct tensor output of each term's neuron set
+        aux_out_map = {} # processed through additional tanh and linear layers
+        for i, layer in enumerate(self.term_layer_list):
+            for term in layer: # compute neuron outputs from lowest to highest depth
+                child_input_list = []
+                for child in self.term_child_map[term]: # input has output from child term neurons
+                    child_input_list.append(term_NN_out_map[child])
+                if term in self.term_element_map: # input has directly mapped elements
+                    child_input_list.append(term_out_map[term])
+                child_input = torch.cat(child_input_list,1)
+                
+                # compute direct output from current term's neurons
+                term_NN_out = self._modules[term+'_linear_layer'](child_input)              
+
+                # pass through Tanh and BatchNorm layers before feeding to parent neurons
+                Tanh_out = F.tanh(term_NN_out)
+                term_NN_out_map[term] = self._modules[term+'_batchnorm_layer'](Tanh_out)
+                
+                # auxillary outputs 
+                aux_layer1_out = F.tanh(self._modules[term+'_aux_linear_layer1'](term_NN_out_map[term]))
+                aux_out_map[term] = self._modules[term+'_aux_linear_layer2'](aux_layer1_out)
+
+#        return aux_out_map, term_NN_out_map
+        return term_NN_out_map[self.root] # output at the root node
+    
+    
+''' True models for original MNIST problem of predicting image labels '''
     
 class LinearNet(nn.Module):
     ''' 3-layer linear fully connected network '''

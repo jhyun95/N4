@@ -17,7 +17,8 @@ def main():
     data_file = '../data/pixel_correlations/pixel_mcc_adj_3s.csv.gz'
     corr = np.loadtxt(data_file, delimiter=',')
     distances = np.max(corr) - np.abs(corr)
-    adj, assoc = hierarchial_clustering(distances, 0.05, 10, False, True)
+    root, adj, assoc, unique_assoc = hierarchial_clustering( 
+            distances, 0.05, 10, True, False, True)
     
 def merge_branches(adj, assoc):
     ''' Merges long linear branches into single nodes '''
@@ -74,8 +75,14 @@ def merge_branches(adj, assoc):
     return new_adj, new_assoc    
 
 def hierarchial_clustering(D, p_threshold, min_cluster_size, 
-                           plot_dendrogram=False,
-                           plot_ontology=False):
+                           merge_linear_branches=True,
+                           plot_dendrogram=False, plot_ontology=False):
+    ''' Generates hierarchical clusters from pairwise distances based on a 
+        p-value threshold and minimum cluster size, then merges along
+        Returns four outputs: the index of the root cluster, adjacency matrix 
+        for clusters, binary association  matrix (cluster x element), 
+        and unique binary association matrix (cluster x element, but 
+        associates each element to the lowest depth cluster only) '''
     ngene, _ = D.shape
     time1 = time.time()
     
@@ -143,16 +150,20 @@ def hierarchial_clustering(D, p_threshold, min_cluster_size,
     nterm = assoc.shape[0]
     time4 = time.time()
     print('Prune ontology takes', time4 - time3,'seconds')
-    print('Before Branch Merging:')
+    print('No Branch Merging:')
     print('    Cluster adjacencies:', adj.shape)
     print('    Cluster associations:', assoc.shape)
-    print('    Hierarchy depth:', __get_hierarchy_depth__(adj, assoc))
-    adj_merged, assoc_merged = merge_branches(adj, assoc)
-    print('After Branch Merging:')
-    print('    Cluster adjacencies:', adj_merged.shape)
-    print('    Cluster associations:', assoc_merged.shape)
-    print('    Hierarchy depth:', __get_hierarchy_depth__(adj_merged, assoc_merged))
-    adj = adj_merged; assoc = assoc_merged
+    depth = __get_hierarchy_depth__(adj, assoc)
+    print('    Hierarchy depth:', depth)
+    if merge_linear_branches: # merge linear branches into single node
+        adj_merged, assoc_merged = merge_branches(adj, assoc)
+        print('After Branch Merging:')
+        print('    Cluster adjacencies:', adj_merged.shape)
+        print('    Cluster associations:', assoc_merged.shape)
+        depth = __get_hierarchy_depth__(adj_merged, assoc_merged)
+        print('    Hierarchy depth:', depth)
+        adj = adj_merged; assoc = assoc_merged
+    unique_assoc = cleanup_multiple_assignments(adj, assoc)
     
     ''' Visualize ontology '''
     if plot_ontology:
@@ -161,18 +172,41 @@ def hierarchial_clustering(D, p_threshold, min_cluster_size,
         nclust, _ = adj.shape
         G = nx.from_numpy_matrix(adj)
         clust_sizes = np.sum(assoc, 1)
+        unique_clust_sizes = np.sum(unique_assoc, 1)
+        child_clust_sizes = clust_sizes - unique_clust_sizes
         labels = {}
         for i in range(nclust):
-            labels[i] = str(i) + ":\n" + str(int(clust_sizes[i]))
+            labels[i] = str(i) + ":\n" + str(int(child_clust_sizes[i])) \
+                + ',' + str(int(unique_clust_sizes[i]))
         try: # if pygraphviz is available
             layout = nx.drawing.nx_agraph.graphviz_layout(G, prog='dot')
             nx.draw(G, pos=layout, arrows=True, node_size=400, 
-                    with_labels=True, labels=labels, font_size=10)    
+                    with_labels=True, labels=labels, font_size=8)    
         except ImportError:
             print('No pygraphviz, using spring layout')
             nx.draw_spring(G, iterations=400, arrows=True, node_size=400, 
-                           with_labels=True, labels=labels, font_size=10)
-    return adj, assoc
+                           with_labels=True, labels=labels, font_size=8)
+            
+    root = __get_root__(adj, assoc)
+    return root, adj, assoc, unique_assoc
+
+def cleanup_multiple_assignments(adj, assoc):
+    ''' Cleans up association matrix so that every element is assigned
+        to only one cluster, the lowest depth cluster. Sparser association
+        allows for a simpler hierarchical neural network. '''
+    num_clusters, num_obj = assoc.shape
+    root = __get_root__(adj, assoc)
+    new_assoc = np.copy(assoc)
+    unvisited = [root]
+    while len(unvisited) > 0:
+        node = unvisited.pop()
+        children = __get_children__(node, adj, True)
+        children_assoc = np.zeros(num_obj)
+        for child in children: # find all objects assigned to children
+            children_assoc = np.logical_or(children_assoc, assoc[child])
+        new_assoc[node] -= children_assoc # remove child-overlapping associations
+        unvisited += children
+    return new_assoc
 
 def __get_parent__(node, adj):
     ''' Get the parent of a node in a tree from an adjacency matrix '''
@@ -187,14 +221,18 @@ def __get_children__(node, adj, as_list=False):
         children = children.tolist()
     return children
 
-def __get_hierarchy_depth__(adj, assoc):
-    ''' Finds the depth of the hierarhcy '''
+def __get_root__(adj, assoc):
+    ''' Finds the index of the root in the hierarchy, based on which
+        cluster has all objects associated with it. '''
     num_clusters, num_obj = assoc.shape
     clust_sizes = np.sum(assoc, 1)
     for i in range(num_clusters):
         if clust_sizes[i] == num_obj:
-            root = i; break
-    
+            return i
+
+def __get_hierarchy_depth__(adj, assoc):
+    ''' Finds the depth of the hierarhcy '''
+    root = __get_root__(adj, assoc)
     node_depths = {root:0}
     unvisited = __get_children__(root, adj, True)
     while len(unvisited) > 0:
