@@ -8,6 +8,7 @@ Created on Mon Apr  9 03:13:28 2018
 import sys
 import numpy as np
 import networkx as nx
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -16,9 +17,6 @@ from torch.autograd import Variable
 import torch.optim as optim
 #from mkl import set_num_threads
 #set_num_threads(4)
-
-import interactions
-import hierarchical_clustering as hc
 
 def main():
     # Training settings   
@@ -55,7 +53,7 @@ def main():
         train_model(model, train_loader, optimizer, epoch, LOG_INTERVAL)
         test_model(model, test_loader)
     torch.save(model.state_dict(), '../models/ConvNet_E10')
-#    model = models.BaseNet()
+#    model = models.ConvNet()
 #    model.load_state_dict(torch.load('../models/ConvNet_E10'))
         
 def train_model(model, train_loader, optimizer, epoch, log_interval):
@@ -119,29 +117,41 @@ def generate_multiple_KOs(base, true_model, count, seed=1):
     pass
 
 def make_dcellnet_for_label(true_model, label=2, correlation_data_file=None,
-                            p_threshold=0.05, min_cluster_size=10):
+                            p_threshold=0.05, min_cluster_size=10,
+                            plot_ontology=True):
+    ''' Creates a DCellNet for predicting whether or not an image has a 
+        particular label. The intended usage is to be analogous to cell 
+        viability predictions from genotype. For instance, taking each pixel 
+        in a black and white image as the "genotype", DCellNet will predict 
+        whether or not the image's label or "viability" is changed (based
+        on true_model), when various pixels are flipped or "knocked out". '''
+        
+    from interactions import find_pixel_correlations
+    from hierarchical_clustering import compute_hierarchial_clusters
     ''' Get pixel correlations for the label subset of images '''
+    print('Loading pixel correlations...')
     if correlation_data_file == None: # no precomputed correlations
-        correlations = interactions.find_pixel_correlations(
+        correlations = find_pixel_correlations(
                 true_model, labelset=label, check_consistency=True,
                 mode='mcc-adj', output_file=None)
     else: # precomputed correlation values
         correlations = np.loadtxt(correlation_data_file, delimiter=',')
         
-    ''' Construct pixel hierarchy. Removes overlapping pixel associations
-        for a simpler model (unique_associations=True) '''
+    ''' Construct pixel hierarchy. '''
+    print('Computing pixel hierarchical clusters and associations...')
     distances = np.max(correlations) - np.abs(correlations)
-    root, adj, assoc, unique_assoc = hc.hierarchical_clustering(
+    root, adj, assoc, unique_assoc = compute_hierarchial_clusters(
             distances, p_threshold, min_cluster_size, 
-            merge_linear_branches=True, unique_associations=True,
-            plot_dendrogram=False, plot_ontology=False)
+            merge_linear_branches=True, plot_dendrogram=False, 
+            plot_ontology=plot_ontology)
     
     ''' Format hierarchy for DCellNet object '''
+    print('Constructing DCellNet...')
     num_terms, num_elements = assoc.shape
     dG = nx.DiGraph(adj)
     term_size_map = {}; term_element_map = {}
     for i in range(num_terms):
-        term = str(i) # convert to string, but probably can take ints directly
+        term = i
         ''' Use non-unique associations for term size, since this only
             dictates the number of neurons assigned to this term '''
         term_size_map[term] = np.sum(assoc[i,:]) 
@@ -149,8 +159,9 @@ def make_dcellnet_for_label(true_model, label=2, correlation_data_file=None,
             inputting into every term in the hierarchy (i.e. using non-unique
             associations would have the root neuron set receive num_elements + 
             all children outputs as its input) '''
-        mapped_elements = np.nonzero(unique_assoc[i,:])[0] # unique associations
-        term_element_map[term] = set(mapped_elements)
+        directly_mapped_elements = np.nonzero(unique_assoc[i,:])[0] # unique associations
+        if len(directly_mapped_elements) > 0:
+            term_element_map[term] = set(directly_mapped_elements)
         
     return DCellNet(term_size_map, term_element_map, dG, num_elements, root)
 
@@ -193,7 +204,7 @@ class DCellNet(nn.Module):
             if len(elements) == 0:
                 print('There are no directed associated elements for term', term)
                 sys.exit(1)
-            self.add_module(term+'_direct_input_layer', nn.Linear(self.feature_dim, len(elements)))
+            self.add_module(str(term)+'_direct_input_layer', nn.Linear(self.feature_dim, len(elements)))
 
     def construct_NN_graph(self, dG):
         ''' Constructs linear layers to form neural network hierarchy '''
@@ -212,10 +223,10 @@ class DCellNet(nn.Module):
                 if term in self.term_element_map: # directly mapped elements
                     input_size += len(self.term_element_map[term])
                 term_hidden = self.term_dim_map[term] # num neurons = output dim
-                self.add_module(term+'_linear_layer', nn.Linear(input_size, term_hidden))
-                self.add_module(term+'_batchnorm_layer', nn.BatchNorm1d(term_hidden))
-                self.add_module(term+'_aux_linear_layer1', nn.Linear(term_hidden,1))
-                self.add_module(term+'_aux_linear_layer2', nn.Linear(1,1))
+                self.add_module(str(term)+'_linear_layer', nn.Linear(input_size, term_hidden))
+                self.add_module(str(term)+'_batchnorm_layer', nn.BatchNorm1d(term_hidden))
+                self.add_module(str(term)+'_aux_linear_layer1', nn.Linear(term_hidden,1))
+                self.add_module(str(term)+'_aux_linear_layer2', nn.Linear(1,1))
     
             dG.remove_nodes_from(leaves)
             leaves = [n for n,d in dG.out_degree() if d==0]
@@ -238,15 +249,15 @@ class DCellNet(nn.Module):
                 child_input = torch.cat(child_input_list,1)
                 
                 # compute direct output from current term's neurons
-                term_NN_out = self._modules[term+'_linear_layer'](child_input)              
+                term_NN_out = self._modules[str(term)+'_linear_layer'](child_input)              
 
                 # pass through Tanh and BatchNorm layers before feeding to parent neurons
                 Tanh_out = F.tanh(term_NN_out)
-                term_NN_out_map[term] = self._modules[term+'_batchnorm_layer'](Tanh_out)
+                term_NN_out_map[term] = self._modules[str(term)+'_batchnorm_layer'](Tanh_out)
                 
                 # auxillary outputs 
-                aux_layer1_out = F.tanh(self._modules[term+'_aux_linear_layer1'](term_NN_out_map[term]))
-                aux_out_map[term] = self._modules[term+'_aux_linear_layer2'](aux_layer1_out)
+                aux_layer1_out = F.tanh(self._modules[str(term)+'_aux_linear_layer1'](term_NN_out_map[term]))
+                aux_out_map[term] = self._modules[str(term)+'_aux_linear_layer2'](aux_layer1_out)
 
 #        return aux_out_map, term_NN_out_map
         return term_NN_out_map[self.root] # output at the root node

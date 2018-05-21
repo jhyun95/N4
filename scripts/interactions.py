@@ -8,31 +8,35 @@ Created on Mon Apr  9 16:52:13 2018
 from __future__ import print_function
 import torch
 from torchvision import datasets, transforms
-
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
-import models
 import random, time, os, multiprocessing
+
+from models import transform_black_and_white, ConvNet
 
 torch.manual_seed(1) # FIXED SEED FOR REPRODUCIBILITY
 DIM = 28 # images are 28x28
 TOTAL_IMAGES = 10000 # total number of images
-MODEL = models.BaseNet()
-MODEL.load_state_dict(torch.load("../models/BaseNet_E10"))
 OUTPUT_1ST = '../data/1st_order_seed_1.tsv'
 OUTPUT_2ND = '../data/2nd_order_seed_1.tsv'
 CORR_DIR = '../data/pixel_correlations/'
 
 def main():
-#    third_order_test()
-#    find_lethal_pixels()
-#    find_2nd_order_interactions()
+    ''' Examines 1st order and 2nd order interactions, and also computes
+        pixel correlations when taking ConvNet as the true model. '''
+    model = ConvNet()
+    model.load_state_dict(torch.load("../models/ConvNet_E10"))
+    
+    ''' Old exploratory functions '''
+#    third_order_test(model)
+#    find_lethal_pixels(model)
+#    find_2nd_order_interactions(model)
 
-    ''' Pixel Hierarchy Extraction '''
-#    find_pixel_correlations_parallel(sets=range(10), mode='sokal-michener', cpus=2)
-#    find_pixel_correlations_parallel(sets=range(10), mode='mcc', cpus=2)
-    find_pixel_correlations_parallel(sets=range(10), mode='mcc-adj', cpus=2)
+    ''' Pixel Correlation Calculation '''
+#    find_pixel_correlations_parallel(model, sets=range(10), mode='sokal-michener', cpus=2)
+#    find_pixel_correlations_parallel(model, sets=range(10), mode='mcc', cpus=2)
+    find_pixel_correlations_parallel(model, sets=range(10), mode='mcc-adj', cpus=2)
     
 #    heatmap_correlation(CORR_DIR + 'pixel_sokal_michener_0s.csv.gz'); plt.figure()
 #    heatmap_correlation(CORR_DIR + 'pixel_mcc_0s.csv.gz'); plt.figure()
@@ -43,7 +47,7 @@ def heatmap_correlation(correlation_data_file):
     data = np.loadtxt(correlation_data_file, delimiter=',')
     sns.heatmap(data, vmin=-1, vmax=1, cmap='RdBu')
     
-def find_pixel_correlations_parallel(sets=range(10), mode='mcc-adj', cpus=2):
+def find_pixel_correlations_parallel(model, sets=range(10), mode='mcc-adj', cpus=2):
     ''' Compute pixel correlations for a given mode and all labelsets,
         based on find_pixel_correlations '''
     def __pixel_correlation_helper__(i_mode):
@@ -51,13 +55,13 @@ def find_pixel_correlations_parallel(sets=range(10), mode='mcc-adj', cpus=2):
         i,mode = i_mode
         filename = CORR_DIR + 'pixel_' +mode.replace('-','_') 
         filename += '_' + str(i) + 's.csv.gz'
-        find_pixel_correlations(labelset=i, mode=mode, output_file=filename)
+        find_pixel_correlations(model, labelset=i, mode=mode, output_file=filename)
         
     pool = multiprocessing.Pool(cpus)
     pool_data = map(lambda i: (i,mode), sets)
     pool.map(__pixel_correlation_helper__, pool_data)
 
-def find_pixel_correlations(model=MODEL, labelset=2, check_consistency=True,
+def find_pixel_correlations(model, labelset=2, check_consistency=True,
                             mode='sokal-michener', output_file=None):
     ''' Create pairwise pixel correlations for either all images, or for 
         a particular label (i.e. 2s only). Uses model-generated labels, 
@@ -74,7 +78,7 @@ def find_pixel_correlations(model=MODEL, labelset=2, check_consistency=True,
     ''' First find images that match the desired label '''
     test_loader = torch.utils.data.DataLoader(
         datasets.MNIST('../data', train=False, download=True, 
-                       transform=transforms.Compose(models.transform_list())),
+                       transform=transforms.Compose(transform_black_and_white())),
         batch_size=1, shuffle=False)  
         
     model.eval(); images = []
@@ -126,7 +130,7 @@ def find_pixel_correlations(model=MODEL, labelset=2, check_consistency=True,
     print('Time (seconds):', round(time.time() - start_time, 3))
     return correlations
 
-def find_2nd_order_interactions(model=MODEL, first_order_file=OUTPUT_1ST,
+def find_2nd_order_interactions(model, first_order_file=OUTPUT_1ST,
                                 output_file = OUTPUT_2ND):
     ''' For all images that have lethal pixels and are consistent (base 
         prediction = actual label), scan pairs of pixels for interactions:
@@ -168,7 +172,7 @@ def find_2nd_order_interactions(model=MODEL, first_order_file=OUTPUT_1ST,
         f.close()
     
     image_counter = 1
-    total_pairs = 306936.0
+    total_pairs = DIM*DIM*(DIM*DIM-1)*0.5
     for hexstring in consistent_images:
         base = base_identity[hexstring][1]
         print('Image', image_counter, '(' + str(base) + ')', hexstring)
@@ -208,13 +212,13 @@ def find_2nd_order_interactions(model=MODEL, first_order_file=OUTPUT_1ST,
             print('Already run, found in', output_file)
         image_counter += 1
 
-def find_lethal_pixels(model=MODEL, output_file=OUTPUT_1ST):
+def find_lethal_pixels(model, output_file=OUTPUT_1ST):
     ''' For each image, swap every pixel one at a time to see 
         if the prediction is altered / image is corrupted.
         Essentially a search for 1st order interactions '''
     test_loader = torch.utils.data.DataLoader(
         datasets.MNIST('../data', train=False, download=True, 
-                       transform=transforms.Compose(models.transform_list())),
+                       transform=transforms.Compose(transform_black_and_white())),
         batch_size=1, shuffle=False)  
     
     model.eval(); image_counter = 0
@@ -280,12 +284,12 @@ def __get_pixel__(p):
     ''' Maps integer from 0 to DIM*DIM-1 to pixel coordinates '''
     return (p % DIM, int((p-p%DIM)/DIM))
 
-def third_order_test(model=MODEL):
+def third_order_test(model):
     ''' Randomly test images for threeway interactions.
         Initial exploratory approach. '''
     test_loader = torch.utils.data.DataLoader(
         datasets.MNIST('../data', train=False, download=True, 
-                       transform=transforms.Compose(models.transform_list())),
+                       transform=transforms.Compose(transform_black_and_white())),
         batch_size=1, shuffle=False)
 
     model.eval()
@@ -314,9 +318,9 @@ def test_threeway(model,data,p1,p2,p3):
     pixel_sets = [ [], [p1], [p2], [p3], [p1,p2], [p1,p3], [p2,p3], [p1,p2,p3] ]
     predictions = {}
     for pixel_set in pixel_sets:
-        pixels = tuple(map(get_pixel, pixel_set))
-        corrupted = apply_corruptions(data, pixels)
-        predictions[pixels] = get_prediction(model, corrupted)
+        pixels = tuple(map(__get_pixel__, pixel_set))
+        corrupted = __apply_corruptions__(data, pixels)
+        predictions[pixels] = __get_prediction__(model, corrupted)
     return predictions
                     
 if __name__ == '__main__':

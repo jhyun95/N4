@@ -14,10 +14,12 @@ import networkx as nx
 # --install-option="--library-path=/usr/lib/graphviz/"
 
 def main():
+    ''' Applies hierarchical clustering of pixels based on pairwise 
+        adjusted MCCs between pixels for all images labeled as 3. '''
     data_file = '../data/pixel_correlations/pixel_mcc_adj_3s.csv.gz'
     corr = np.loadtxt(data_file, delimiter=',')
     distances = np.max(corr) - np.abs(corr)
-    root, adj, assoc, unique_assoc = hierarchial_clustering( 
+    root, adj, assoc, unique_assoc = compute_hierarchial_clusters( 
             distances, 0.05, 10, True, False, True)
     
 def merge_branches(adj, assoc):
@@ -74,9 +76,9 @@ def merge_branches(adj, assoc):
         new_assoc = np.delete(new_assoc, i, axis=0)
     return new_adj, new_assoc    
 
-def hierarchial_clustering(D, p_threshold, min_cluster_size, 
-                           merge_linear_branches=True,
-                           plot_dendrogram=False, plot_ontology=False):
+def compute_hierarchial_clusters(D, p_threshold, min_cluster_size, 
+                                 merge_linear_branches=True,
+                                 plot_dendrogram=False, plot_ontology=False):
     ''' Generates hierarchical clusters from pairwise distances based on a 
         p-value threshold and minimum cluster size, then merges along
         Returns four outputs: the index of the root cluster, adjacency matrix 
