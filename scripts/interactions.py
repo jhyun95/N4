@@ -7,6 +7,7 @@ Created on Mon Apr  9 16:52:13 2018
 
 from __future__ import print_function
 import torch
+from torch.utils.data import TensorDataset
 from torchvision import datasets, transforms
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -34,13 +35,53 @@ def main():
 #    find_2nd_order_interactions(model)
 
     ''' Pixel Correlation Calculation '''
+    
 #    find_pixel_correlations_parallel(model, sets=range(10), mode='sokal-michener', cpus=2)
 #    find_pixel_correlations_parallel(model, sets=range(10), mode='mcc', cpus=2)
-    find_pixel_correlations_parallel(model, sets=range(10), mode='mcc-adj', cpus=2)
+#    find_pixel_correlations_parallel(model, sets=range(10), mode='mcc-adj', cpus=2)
     
 #    heatmap_correlation(CORR_DIR + 'pixel_sokal_michener_0s.csv.gz'); plt.figure()
 #    heatmap_correlation(CORR_DIR + 'pixel_mcc_0s.csv.gz'); plt.figure()
 #    heatmap_correlation(CORR_DIR + 'pixel_mcc_adj_0s.csv.gz')
+    
+def generate_dcell_train_data(base, true_model, double_count=100000, 
+                              flatten=True, seed=1):
+    ''' Generates training data for DCell testing model as a torch Dataset.
+        Uses ByteTensors to save memory, transform to FloatTensor before 
+        feeding into DCellNet via a DataLoader. Includes:
+        - All single "knockouts", when a single pixel is flipped 
+        - A number of double "knockouts", when two pixels are flipped '''
+    if type(base) == str: # hexstring of image provided
+        image = __hex_to_image__(base)
+    else: # image tensor provided, shape to DIMxDIM
+        image = base.view(DIM,DIM,1,1)
+    
+    ''' Initialize features and targets tensors'''
+    data_count = DIM*DIM + double_count
+    features = torch.zeros([data_count, DIM, DIM]).byte()
+    targets = torch.zeros(data_count).byte()
+    
+    ''' Generate all single knockout data '''
+    for px in range(DIM*DIM):
+        pixel = __get_pixel__(px)
+        corrupted = __apply_corruptions__(image, [pixel])
+        target = __get_prediction__(true_model, corrupted)
+        corrupted = corrupted.view(DIM,DIM) # flatten 4D -> 2D
+        features[px] = corrupted.data.byte()
+        targets[px] = target.data.byte()[0]
+       
+    ''' Generate random double knockout data '''
+    double_kos = __generate_random_pixel_groups__(2, double_count, seed)
+    for i in range(double_count):
+        px1,px2 = double_kos[i]
+        px1 = __get_pixel__(px1)
+        px2 = __get_pixel__(px2)
+        corrupted = __apply_corruptions__(image, [pixel])
+        target = __get_prediction__(true_model, corrupted)
+        features[i + DIM*DIM] = corrupted.data.byte()
+        targets[i + DIM*DIM] = target.data.byte()[0]
+        
+    return TensorDataset(features, targets)
     
 def heatmap_correlation(correlation_data_file):
     ''' Heatmap of pixel correlation data '''
@@ -49,7 +90,8 @@ def heatmap_correlation(correlation_data_file):
     
 def find_pixel_correlations_parallel(model, sets=range(10), mode='mcc-adj', cpus=2):
     ''' Compute pixel correlations for a given mode and all labelsets,
-        based on find_pixel_correlations '''
+        based on find_pixel_correlations. NOTE: Currently not functional, 
+        cannot pickle model for parallelization. Use serial version. '''
     def __pixel_correlation_helper__(i_mode):
         ''' Helper function for parallelized pixel correlation calculation '''
         i,mode = i_mode
@@ -210,7 +252,7 @@ def find_2nd_order_interactions(model, first_order_file=OUTPUT_1ST,
             f.close()
         else: # detected in output file / already run
             print('Already run, found in', output_file)
-        image_counter += 1
+        image_counter += 1        
 
 def find_lethal_pixels(model, output_file=OUTPUT_1ST):
     ''' For each image, swap every pixel one at a time to see 
@@ -251,10 +293,37 @@ def find_lethal_pixels(model, output_file=OUTPUT_1ST):
         f.write('\n' + output) 
     f.close()
     
+def __generate_random_pixel_groups__(size, count, seed=1):
+    ''' Generates random pixel group without replacement '''
+    np.random.seed(seed=seed)
+    if size == 1: # for singles, enumerate all choices and shuffle
+        singles = np.arange(DIM*DIM)
+        np.random.shuffle(singles)
+        return singles[:count]
+    elif size == 2: # for pairs, enumerate all pairs and shuffle
+        double_ko_choices = int(DIM*DIM*(DIM*DIM-1) / 2)
+        double_ko_pairs = np.zeros((double_ko_choices,2), dtype=np.int8)
+        counter = 0
+        for i in range(DIM*DIM):
+            for j in range(i):
+                double_ko_pairs[counter,0] = i
+                double_ko_pairs[counter,1] = j
+                counter += 1
+        np.random.shuffle(double_ko_pairs)
+        return double_ko_pairs[:count]
+    elif size > 2: # for larger groups, generate repeatedly new random groups
+        choices = set()
+        while len(choices) < count:
+            group = tuple(np.random.random_integers(0,DIM*DIM-1,size))
+            choices.add(group)
+        return np.array(list(choices))
+    return np.array([])
+    
 def __get_prediction__(model, data):
     ''' Gets the predicted number for an image represented as a 1x1xDIMxDIM tensor'''
     output = model(data)
     weight, pred = torch.max(output,1)
+    return pred
     
 def __apply_corruptions__(data, pixels):
     ''' Flips pixels in an image represented as a 1x1xDIMxDIM tensor '''

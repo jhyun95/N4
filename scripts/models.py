@@ -52,7 +52,7 @@ def main():
     for epoch in range(1, EPOCHS + 1):
         train_model(model, train_loader, optimizer, epoch, LOG_INTERVAL)
         test_model(model, test_loader)
-    torch.save(model.state_dict(), '../models/ConvNet_E10')
+#    torch.save(model.state_dict(), '../models/ConvNet_E10')
 #    model = models.ConvNet()
 #    model.load_state_dict(torch.load('../models/ConvNet_E10'))
         
@@ -62,6 +62,7 @@ def train_model(model, train_loader, optimizer, epoch, log_interval):
     for batch_idx, (data, target) in enumerate(train_loader):
 #        if args.CUDA:
 #            data, target = data.cuda(), target.cuda()
+        print(data.size(), target.size())
         data, target = Variable(data), Variable(target)
         optimizer.zero_grad()
         output = model(data)
@@ -99,22 +100,6 @@ def transform_black_and_white():
 def transform_default():
     ''' Image scaling, suggested in tutorial. Not used '''
     return [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
-
-def generate_all_single_KOs(base, true_model):
-    ''' Generates training data where a single pixel is flipped.
-        Used for DCell testing model. '''
-    pass
-
-def generate_all_double_KOs(base, true_model, fraction, seed=1):
-    ''' Generates training data where two pixels are flipped. Seed determines
-        the which double KOs are used. Used for DCell testing model. '''
-    pass
-
-def generate_multiple_KOs(base, true_model, count, seed=1):
-    ''' Generates a fixed number of training data where a certain number
-        of pixels are flipped. Seed determines which KOs are generated.
-        Used for DCell testing model. '''
-    pass
 
 def make_dcellnet_for_label(true_model, label=2, correlation_data_file=None,
                             p_threshold=0.05, min_cluster_size=10,
