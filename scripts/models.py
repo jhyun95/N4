@@ -62,8 +62,6 @@ def train_model(model, train_loader, optimizer, epoch, log_interval):
     for batch_idx, (data, target) in enumerate(train_loader):
 #        if args.CUDA:
 #            data, target = data.cuda(), target.cuda()
-        print(data.size(), target.size())
-        data, target = Variable(data), Variable(target)
         optimizer.zero_grad()
         output = model(data)
         loss = F.nll_loss(output, target)
@@ -72,7 +70,7 @@ def train_model(model, train_loader, optimizer, epoch, log_interval):
         if batch_idx % log_interval == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(data), len(train_loader.dataset),
-                100. * batch_idx / len(train_loader), loss.data[0]))
+                100. * batch_idx / len(train_loader), loss.item()))
 
 def test_model(model, test_loader):
     ''' Testing step for number predictor model '''
@@ -82,9 +80,8 @@ def test_model(model, test_loader):
     for data, target in test_loader:
 #        if CUDA.cuda:
 #            data, target = data.cuda(), target.cuda()
-        data, target = Variable(data, volatile=True), Variable(target)
         output = model(data)
-        test_loss += F.nll_loss(output, target, size_average=False).data[0] # sum up batch loss
+        test_loss += F.nll_loss(output, target, size_average=False).item() # sum up batch loss
         pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
         correct += pred.eq(target.data.view_as(pred)).long().cpu().sum()
 
