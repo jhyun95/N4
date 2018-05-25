@@ -7,11 +7,12 @@ Created on Mon Apr  9 16:52:13 2018
 
 from __future__ import print_function
 import torch
-from torch.utils.data import TensorDataset
+from torch.utils.data import TensorDataset, Subset, ConcatDataset
 from torchvision import datasets, transforms
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
+import scipy.misc
 import random, time, os, multiprocessing
 
 from models import transform_black_and_white, ConvNet
@@ -43,45 +44,61 @@ def main():
 #    heatmap_correlation(CORR_DIR + 'pixel_sokal_michener_0s.csv.gz'); plt.figure()
 #    heatmap_correlation(CORR_DIR + 'pixel_mcc_0s.csv.gz'); plt.figure()
 #    heatmap_correlation(CORR_DIR + 'pixel_mcc_adj_0s.csv.gz')
-    
-def generate_dcell_train_data(base, true_model, double_count=100000, 
-                              flatten=True, seed=1):
-    ''' Generates training data for DCell testing model as a torch Dataset.
-        Uses ByteTensors to save memory, transform to FloatTensor before 
-        feeding into DCellNet via a DataLoader. Includes:
-        - All single "knockouts", when a single pixel is flipped 
-        - A number of double "knockouts", when two pixels are flipped '''
+
+def generate_dcell_knockout_data(base, true_model, order=2, count=10000,
+                                 flatten=True, seed=1):
+    ''' Generates a fixed number of unique knockouts of a certain order.
+        Note: May be slow if count ~ number of possible knockouts for order > 2 '''
     if type(base) == str: # hexstring of image provided
         image = __hex_to_image__(base)
     else: # image tensor provided, shape to DIMxDIM
         image = base.view(DIM,DIM,1,1)
     
-    ''' Initialize features and targets tensors'''
-    data_count = DIM*DIM + double_count
-    features = torch.zeros([data_count, DIM, DIM]).byte()
-    targets = torch.zeros(data_count).byte()
+    ''' Initialize feature and targets tensor '''
+    max_count = scipy.misc.comb(N=DIM*DIM, k=order)
+    feature_count = min(max_count, count)
+    features = torch.zeros([feature_count, DIM, DIM]).byte()
+    targets = torch.zeros(feature_count).byte()
     
-    ''' Generate all single knockout data '''
-    for px in range(DIM*DIM):
-        pixel = __get_pixel__(px)
-        corrupted = __apply_corruptions__(image, [pixel])
-        target = __get_prediction__(true_model, corrupted)
-        corrupted = corrupted.view(DIM,DIM) # flatten 4D -> 2D
-        features[px] = corrupted.data.byte()
-        targets[px] = target.data.byte()[0]
-       
-    ''' Generate random double knockout data '''
-    double_kos = __generate_random_pixel_groups__(2, double_count, seed)
-    for i in range(double_count):
-        px1,px2 = double_kos[i]
-        px1 = __get_pixel__(px1)
-        px2 = __get_pixel__(px2)
-        corrupted = __apply_corruptions__(image, [pixel])
-        target = __get_prediction__(true_model, corrupted)
-        features[i + DIM*DIM] = corrupted.data.byte()
-        targets[i + DIM*DIM] = target.data.byte()[0]
+    ''' Generate knockouts '''
+    if order == 0: # wildtype
+        target = __get_prediction__(true_model, image)
+        features[0] = image.data.byte()
+        targets[0] = target.data.byte()[0]
+    else: # knockout
+        knockouts = __generate_random_pixel_groups__(order, count, seed)
+        for i in range(count):
+            px = knockouts[i]
+            pixels = map(__get_pixel__, px)
+            corrupted = __apply_corruptions__(image, pixels)
+            target = __get_prediction__(true_model, corrupted)
+            features[i + DIM*DIM] = corrupted.data.byte()
+            targets[i + DIM*DIM] = target.data.byte()[0]
         
     return TensorDataset(features, targets)
+    
+def generate_dcell_data(base, true_model, 
+                        double_train_count=100000, 
+                        double_test_count=20000,
+                        flatten=True, seed=1):
+    ''' Generates training data for DCell testing model as a torch Dataset.
+        Uses ByteTensors to save memory, transform to FloatTensor before 
+        feeding into DCellNet via a DataLoader. Includes:
+        - All single "knockouts", when a single pixel is flipped 
+        - A number of double "knockouts", when two pixels are flipped '''
+    total_doubles = double_train_count + double_test_count
+    
+    wildtype = generate_dcell_knockout_data(
+            base, true_model, order=0, count=1, flatten, seed)
+    singles = generate_dcell_knockout_data(
+            base, true_model, order=1, count=DIM*DIM, flatten, seed)
+    doubles = generate_dcell_knockout_data(
+            base, true_model, order=2, count=total_doubles, flatten, seed)
+    train_doubles = Subset(doubles, np.arange(train_count))
+    test_doubles = Subset(doubles, np.arange(train_count, total_doubles))
+    
+    train_set = ConcatDataset([wildtype, singles, train_doubles])
+    return train_set, test_doubles
     
 def heatmap_correlation(correlation_data_file):
     ''' Heatmap of pixel correlation data '''
@@ -294,7 +311,10 @@ def find_lethal_pixels(model, output_file=OUTPUT_1ST):
     f.close()
     
 def __generate_random_pixel_groups__(size, count, seed=1):
-    ''' Generates random pixel group without replacement '''
+    ''' Generates random pixel group without replacement.
+        For singles and doubles, all choices are enumerated then shuffled. 
+        For larger groups, choices are drawn randomly and repeats are 
+        dropped, until the desired count is reached. '''
     np.random.seed(seed=seed)
     if size == 1: # for singles, enumerate all choices and shuffle
         singles = np.arange(DIM*DIM)
@@ -315,7 +335,8 @@ def __generate_random_pixel_groups__(size, count, seed=1):
         choices = set()
         while len(choices) < count:
             group = tuple(np.random.random_integers(0,DIM*DIM-1,size))
-            choices.add(group)
+            if len(group) == set(group): # pixels are unique
+                choices.add(group)
         return np.array(list(choices))
     return np.array([])
     
