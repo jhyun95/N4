@@ -19,7 +19,7 @@ def main():
     data_file = '../data/pixel_correlations/pixel_mcc_adj_3s.csv.gz'
     corr = np.loadtxt(data_file, delimiter=',')
     distances = np.max(corr) - np.abs(corr)
-    root, adj, assoc, unique_assoc = compute_hierarchial_clusters( 
+    root, adj, assoc, unique_assoc = compute_hierarchical_clusters( 
             distances, 0.05, 10, True, False, True)
     
 def merge_branches(adj, assoc):
@@ -76,7 +76,7 @@ def merge_branches(adj, assoc):
         new_assoc = np.delete(new_assoc, i, axis=0)
     return new_adj, new_assoc    
 
-def compute_hierarchial_clusters(D, p_threshold, min_cluster_size, 
+def compute_hierarchical_clusters(D, p_threshold, min_cluster_size, 
                                  merge_linear_branches=True,
                                  plot_dendrogram=False, plot_ontology=False):
     ''' Generates hierarchical clusters from pairwise distances based on a 
