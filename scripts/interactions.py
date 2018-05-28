@@ -7,12 +7,11 @@ Created on Mon Apr  9 16:52:13 2018
 
 from __future__ import print_function
 import torch
-from torch.utils.data import TensorDataset, Subset, ConcatDataset
+from torch.utils.data import TensorDataset
 from torchvision import datasets, transforms
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
-import scipy.misc
 import random, time, os, multiprocessing
 
 from models import transform_black_and_white, ConvNet
@@ -44,38 +43,6 @@ def main():
 #    heatmap_correlation(CORR_DIR + 'pixel_sokal_michener_0s.csv.gz'); plt.figure()
 #    heatmap_correlation(CORR_DIR + 'pixel_mcc_0s.csv.gz'); plt.figure()
 #    heatmap_correlation(CORR_DIR + 'pixel_mcc_adj_0s.csv.gz')
-
-def generate_dcell_knockout_data(base, true_model, order=2, count=10000,
-                                 flatten=True, seed=1):
-    ''' Generates a fixed number of unique knockouts of a certain order.
-        Note: May be slow if count ~ number of possible knockouts for order > 2 '''
-    if type(base) == str: # hexstring of image provided
-        image = __hex_to_image__(base)
-    else: # image tensor provided, shape to DIMxDIM
-        image = base.view(DIM,DIM,1,1)
-    
-    ''' Initialize feature and targets tensor '''
-    max_count = scipy.misc.comb(N=DIM*DIM, k=order)
-    feature_count = min(max_count, count)
-    features = torch.zeros([feature_count, DIM, DIM]).byte()
-    targets = torch.zeros(feature_count).byte()
-    
-    ''' Generate knockouts '''
-    if order == 0: # wildtype
-        target = __get_prediction__(true_model, image)
-        features[0] = image.data.byte()
-        targets[0] = target.data.byte()[0]
-    else: # knockout
-        knockouts = __generate_random_pixel_groups__(order, count, seed)
-        for i in range(count):
-            px = knockouts[i]
-            pixels = map(__get_pixel__, px)
-            corrupted = __apply_corruptions__(image, pixels)
-            target = __get_prediction__(true_model, corrupted)
-            features[i + DIM*DIM] = corrupted.data.byte()
-            targets[i + DIM*DIM] = target.data.byte()[0]
-        
-    return TensorDataset(features, targets)
     
 def generate_dcell_data(base, true_model, 
                         double_train_count=100000, 
@@ -87,18 +54,42 @@ def generate_dcell_data(base, true_model,
         - All single "knockouts", when a single pixel is flipped 
         - A number of double "knockouts", when two pixels are flipped '''
     total_doubles = double_train_count + double_test_count
+    wildtype = [ [] ]
+    singles = __generate_random_pixel_groups__(order=1, count=DIM*DIM, seed=seed)
+    doubles = __generate_random_pixel_groups__(order=1, count=total_doubles, seed=seed)
+    train_doubles = doubles[:double_train_count]
+    test_doubles = doubles[double_train_count:]
     
-    wildtype = generate_dcell_knockout_data(
-            base, true_model, order=0, count=1, flatten, seed)
-    singles = generate_dcell_knockout_data(
-            base, true_model, order=1, count=DIM*DIM, flatten, seed)
-    doubles = generate_dcell_knockout_data(
-            base, true_model, order=2, count=total_doubles, flatten, seed)
-    train_doubles = Subset(doubles, np.arange(train_count))
-    test_doubles = Subset(doubles, np.arange(train_count, total_doubles))
+    train_set = wildtype + singles + train_doubles
+    test_set = wildtype + singles + test_doubles
+    train_dataset, train_labels = convert_knockouts_to_tensor_dataset(base, true_model, train_set)
+    test_dataset, test_labels = convert_knockouts_to_tensor_dataset(base, true_model, test_set)
     
-    train_set = ConcatDataset([wildtype, singles, train_doubles])
-    return train_set, test_doubles
+    return train_dataset, test_dataset, train_labels, test_labels
+
+def convert_knockouts_to_tensor_dataset(base, true_model, knockouts):
+    ''' Takes a list of lists, where each sublist corresponds to a set 
+        of pixels to flip or "knockout" relative to a base image. 
+        Map each knockout to a tensor to create TensorDataset '''
+    if type(base) == str: # hexstring of image provided
+        image = __hex_to_image__(base)
+    else: # image tensor provided, shape to DIMxDIM
+        image = base.view(DIM,DIM,1,1)
+        
+    ''' Generate feature and target tensors '''
+    labels = {}
+    features = torch.zeros([len(knockouts), DIM, DIM]).byte()
+    targets = torch.zeros(len(knockouts)).byte()
+    for i in range(len(knockouts)):
+        pixel_indices = knockouts[i]
+        pixels = map(__get_pixel__, pixel_indices)
+        corrupted = __apply_corruptions__(image, pixels)
+        target = __get_prediction__(true_model, corrupted)
+        features[i + DIM*DIM] = corrupted.data.byte()
+        targets[i + DIM*DIM] = target.data.byte()[0]
+        labels[knockouts[i]] = target.data.byte()[0]
+        
+    return TensorDataset(features, targets), labels
     
 def heatmap_correlation(correlation_data_file):
     ''' Heatmap of pixel correlation data '''
@@ -342,15 +333,25 @@ def __generate_random_pixel_groups__(size, count, seed=1):
     
 def __get_prediction__(model, data):
     ''' Gets the predicted number for an image represented as a 1x1xDIMxDIM tensor'''
-    output = model(data)
+    if type(data) == str: # hexstring of image provided
+        image = __hex_to_image__(data)
+    else: # image tensor provided, shape to DIMxDIM
+        image = data.view(DIM,DIM,1,1)
+        
+    output = model(image)
     weight, pred = torch.max(output,1)
     return pred
     
 def __apply_corruptions__(data, pixels):
     ''' Flips pixels in an image represented as a 1x1xDIMxDIM tensor '''
-    mod_data = data.clone()
+    if type(data) == str: # hexstring of image provided
+        image = __hex_to_image__(data)
+    else: # image tensor provided, shape to DIMxDIM
+        image = data.view(DIM,DIM,1,1)
+        
+    mod_data = image.clone()
     for r,c in pixels:
-        mod_data[0,0,r,c] = 1 - data[0,0,r,c]
+        mod_data[0,0,r,c] = 1 - image[0,0,r,c]
     return mod_data
 
 def __image_to_hex__(data):
