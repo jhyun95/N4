@@ -1,3 +1,4 @@
 *.pyc
 misc/*
 data/pixel_correlations/*
+data/DCell_test/*

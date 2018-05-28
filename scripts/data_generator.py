@@ -11,19 +11,26 @@ from torch.utils.data import TensorDataset
 
 from interactions import DIM, __get_pixel__, __apply_corruptions__, \
     __hex_to_image__, __get_prediction__
+    
+def generate_dcell_eval_data(base, true_model, order, count=100000, seed=1):
+    ''' Generates evaluation data for DCell testing model  as TorchDatasets.
+        Intended to simulate higher-order knockouts that would normally
+        not be measured. '''
+    knockouts = generate_random_pixel_groups(size=order, count=count, seed=seed)
+    print('Generating tensors from evaluation knockouts...')
+    dataset, labels = convert_knockouts_to_tensor_dataset(base, true_model, knockouts)
+    return dataset, labels
 
-def generate_dcell_data(base, true_model, 
-                        double_train_count=100000, 
-                        double_test_count=20000,
-                        flatten=True, seed=1):
-    ''' Generates training data for DCell testing model as a torch 
-        TensorDataset (already shaped to work in DCellNet). Includes:
+def generate_dcell_train_data(base, true_model, double_train_count=100000, 
+                              double_test_count=20000, seed=1):
+    ''' Generates training and testing/validation data for DCell testing model 
+        as torch TensorDatasets (already shaped to work in DCellNet). Includes:
         - All single "knockouts", when a single pixel is flipped 
         - A number of double "knockouts", when two pixels are flipped '''
     total_doubles = double_train_count + double_test_count
     wildtype = [ tuple() ]
-    singles = __generate_random_pixel_groups__(size=1, count=DIM*DIM, seed=seed)
-    doubles = __generate_random_pixel_groups__(size=2, count=total_doubles, seed=seed)
+    singles = generate_random_pixel_groups(size=1, count=DIM*DIM, seed=seed)
+    doubles = generate_random_pixel_groups(size=2, count=total_doubles, seed=seed)
     train_doubles = doubles[:double_train_count]
     test_doubles = doubles[double_train_count:]
     
@@ -65,7 +72,7 @@ def convert_knockouts_to_tensor_dataset(base, true_model, knockouts, print_count
         
     return TensorDataset(features, targets), labels
 
-def __generate_random_pixel_groups__(size, count, seed=1):
+def generate_random_pixel_groups(size, count, seed=1):
     ''' Generates random pixel group without replacement. Returns a list of 
         tuples, each comprised with a set of pixel indices from 0 to DIM*DIM.
         For singles and doubles, all choices are enumerated then shuffled. 
@@ -94,8 +101,8 @@ def __generate_random_pixel_groups__(size, count, seed=1):
     elif size > 2: # for larger groups, generate repeatedly new random groups
         choices = set()
         while len(choices) < count:
-            group = tuple(np.random.random_integers(0,DIM*DIM-1,size))
-            if len(group) == set(group): # pixels are unique
+            group = tuple(np.random.randint(0,DIM*DIM,size=size))
+            if len(group) == len(set(group)): # pixels are unique
                 choices.add(group)
         return list(choices)
     return []
