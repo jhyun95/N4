@@ -7,7 +7,6 @@ Created on Mon Apr  9 16:52:13 2018
 
 from __future__ import print_function
 import torch
-from torch.utils.data import TensorDataset
 from torchvision import datasets, transforms
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -43,53 +42,6 @@ def main():
 #    heatmap_correlation(CORR_DIR + 'pixel_sokal_michener_0s.csv.gz'); plt.figure()
 #    heatmap_correlation(CORR_DIR + 'pixel_mcc_0s.csv.gz'); plt.figure()
 #    heatmap_correlation(CORR_DIR + 'pixel_mcc_adj_0s.csv.gz')
-    
-def generate_dcell_data(base, true_model, 
-                        double_train_count=100000, 
-                        double_test_count=20000,
-                        flatten=True, seed=1):
-    ''' Generates training data for DCell testing model as a torch Dataset.
-        Uses ByteTensors to save memory, transform to FloatTensor before 
-        feeding into DCellNet via a DataLoader. Includes:
-        - All single "knockouts", when a single pixel is flipped 
-        - A number of double "knockouts", when two pixels are flipped '''
-    total_doubles = double_train_count + double_test_count
-    wildtype = [ [] ]
-    singles = __generate_random_pixel_groups__(order=1, count=DIM*DIM, seed=seed)
-    doubles = __generate_random_pixel_groups__(order=1, count=total_doubles, seed=seed)
-    train_doubles = doubles[:double_train_count]
-    test_doubles = doubles[double_train_count:]
-    
-    train_set = wildtype + singles + train_doubles
-    test_set = wildtype + singles + test_doubles
-    train_dataset, train_labels = convert_knockouts_to_tensor_dataset(base, true_model, train_set)
-    test_dataset, test_labels = convert_knockouts_to_tensor_dataset(base, true_model, test_set)
-    
-    return train_dataset, test_dataset, train_labels, test_labels
-
-def convert_knockouts_to_tensor_dataset(base, true_model, knockouts):
-    ''' Takes a list of lists, where each sublist corresponds to a set 
-        of pixels to flip or "knockout" relative to a base image. 
-        Map each knockout to a tensor to create TensorDataset '''
-    if type(base) == str: # hexstring of image provided
-        image = __hex_to_image__(base)
-    else: # image tensor provided, shape to DIMxDIM
-        image = base.view(DIM,DIM,1,1)
-        
-    ''' Generate feature and target tensors '''
-    labels = {}
-    features = torch.zeros([len(knockouts), DIM, DIM]).byte()
-    targets = torch.zeros(len(knockouts)).byte()
-    for i in range(len(knockouts)):
-        pixel_indices = knockouts[i]
-        pixels = map(__get_pixel__, pixel_indices)
-        corrupted = __apply_corruptions__(image, pixels)
-        target = __get_prediction__(true_model, corrupted)
-        features[i + DIM*DIM] = corrupted.data.byte()
-        targets[i + DIM*DIM] = target.data.byte()[0]
-        labels[knockouts[i]] = target.data.byte()[0]
-        
-    return TensorDataset(features, targets), labels
     
 def heatmap_correlation(correlation_data_file):
     ''' Heatmap of pixel correlation data '''
@@ -135,8 +87,8 @@ def find_pixel_correlations(model, labelset=2, check_consistency=True,
     start_time = time.time()
     print('Loading images that match:', labelset)
     for data, target in test_loader:
-        data = torch.autograd.Variable(data, volatile=True)
-        target = torch.autograd.Variable(target)
+#        data = torch.autograd.Variable(data, volatile=True)
+#        target = torch.autograd.Variable(target)
         output = model(data)
         weight, base_pred = torch.max(output, 1)
         if labelset == None or int(base_pred) == labelset:
@@ -275,8 +227,8 @@ def find_lethal_pixels(model, output_file=OUTPUT_1ST):
     lethal_pixels = {}
     for data, target in test_loader:
         image_counter += 1
-        data = torch.autograd.Variable(data, volatile=True)
-        target = torch.autograd.Variable(target)
+#        data = torch.autograd.Variable(data, volatile=True)
+#        target = torch.autograd.Variable(target)
         image_hex = __image_to_hex__(data)
         output = model(data)
         weight, base_pred = torch.max(output, 1)
@@ -301,42 +253,12 @@ def find_lethal_pixels(model, output_file=OUTPUT_1ST):
         f.write('\n' + output) 
     f.close()
     
-def __generate_random_pixel_groups__(size, count, seed=1):
-    ''' Generates random pixel group without replacement.
-        For singles and doubles, all choices are enumerated then shuffled. 
-        For larger groups, choices are drawn randomly and repeats are 
-        dropped, until the desired count is reached. '''
-    np.random.seed(seed=seed)
-    if size == 1: # for singles, enumerate all choices and shuffle
-        singles = np.arange(DIM*DIM)
-        np.random.shuffle(singles)
-        return singles[:count]
-    elif size == 2: # for pairs, enumerate all pairs and shuffle
-        double_ko_choices = int(DIM*DIM*(DIM*DIM-1) / 2)
-        double_ko_pairs = np.zeros((double_ko_choices,2), dtype=np.int8)
-        counter = 0
-        for i in range(DIM*DIM):
-            for j in range(i):
-                double_ko_pairs[counter,0] = i
-                double_ko_pairs[counter,1] = j
-                counter += 1
-        np.random.shuffle(double_ko_pairs)
-        return double_ko_pairs[:count]
-    elif size > 2: # for larger groups, generate repeatedly new random groups
-        choices = set()
-        while len(choices) < count:
-            group = tuple(np.random.random_integers(0,DIM*DIM-1,size))
-            if len(group) == set(group): # pixels are unique
-                choices.add(group)
-        return np.array(list(choices))
-    return np.array([])
-    
 def __get_prediction__(model, data):
     ''' Gets the predicted number for an image represented as a 1x1xDIMxDIM tensor'''
     if type(data) == str: # hexstring of image provided
         image = __hex_to_image__(data)
     else: # image tensor provided, shape to DIMxDIM
-        image = data.view(DIM,DIM,1,1)
+        image = data.view(1,1,DIM,DIM)
         
     output = model(image)
     weight, pred = torch.max(output,1)
@@ -347,7 +269,7 @@ def __apply_corruptions__(data, pixels):
     if type(data) == str: # hexstring of image provided
         image = __hex_to_image__(data)
     else: # image tensor provided, shape to DIMxDIM
-        image = data.view(DIM,DIM,1,1)
+        image = data.view(1,1,DIM,DIM)
         
     mod_data = image.clone()
     for r,c in pixels:
@@ -368,7 +290,7 @@ def __hex_to_image__(hexstring):
     bitstring = list(map(int, list(bitstring)))
     data = torch.FloatTensor(list(bitstring))
     data = data.view(1,1,DIM,DIM)
-    data = torch.autograd.Variable(data, volatile=True)
+#    data = torch.autograd.Variable(data, volatile=True)
     return data
 
 def __get_pixel__(p):
@@ -387,8 +309,8 @@ def third_order_test(model):
     image_counter = 0
     for data, target in test_loader:
         image_counter += 1
-        data = torch.autograd.Variable(data, volatile=True)
-        target = torch.autograd.Variable(target)
+#        data = torch.autograd.Variable(data, volatile=True)
+#        target = torch.autograd.Variable(target)
         output = model(data)
         weight, base_pred = torch.max(output, 1)
         print('Image', image_counter, 'Label:', int(target),  'Predicted:', int(base_pred))

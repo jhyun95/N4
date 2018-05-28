@@ -109,7 +109,7 @@ def make_dcellnet_for_label(true_model, label=2, correlation_data_file=None,
         on true_model), when various pixels are flipped or "knocked out". '''
         
     from interactions import find_pixel_correlations
-    from hierarchical_clustering import compute_hierarchial_clusters
+    from hierarchical_clustering import compute_hierarchical_clusters
     ''' Get pixel correlations for the label subset of images '''
     print('Loading pixel correlations...')
     if correlation_data_file == None: # no precomputed correlations
@@ -122,7 +122,7 @@ def make_dcellnet_for_label(true_model, label=2, correlation_data_file=None,
     ''' Construct pixel hierarchy. '''
     print('Computing pixel hierarchical clusters and associations...')
     distances = np.max(correlations) - np.abs(correlations)
-    root, adj, assoc, unique_assoc = compute_hierarchial_clusters(
+    root, adj, assoc, unique_assoc = compute_hierarchical_clusters(
             distances, p_threshold, min_cluster_size, 
             merge_linear_branches=True, plot_dendrogram=False, 
             plot_ontology=plot_ontology)
@@ -217,7 +217,7 @@ class DCellNet(nn.Module):
         ''' Forward calculation for training and prediction '''
         term_out_map = {} # renamed from term_gene_out_map
         for term, _ in self.term_element_map.items():
-            term_out_map[term] = self._modules[term + '_direct_input_layer'](x) 
+            term_out_map[term] = self._modules[str(term) + '_direct_input_layer'](x) 
 
         term_NN_out_map = {} # direct tensor output of each term's neuron set
         aux_out_map = {} # processed through additional tanh and linear layers
