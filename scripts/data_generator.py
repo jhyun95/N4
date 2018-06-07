@@ -5,6 +5,7 @@ Created on Mon May 28 00:40:08 2018
 @author: jhyun_000
 """
 
+import itertools
 import numpy as np
 import torch
 from torch.utils.data import TensorDataset
@@ -20,6 +21,29 @@ def generate_dcell_eval_data(base, true_model, order, count=100000, seed=1):
     print('Generating tensors from evaluation knockouts...')
     dataset, labels = convert_knockouts_to_tensor_dataset(base, true_model, knockouts)
     return dataset, labels
+
+def generate_dcell_interacting_eval_data(base, true_model, order, test_count=100000, seed=1):
+    ''' Same as dcell_eval_data, but after generating knockouts, returns only
+        those that demonstrate interactions of the order specified. For 
+        instance, if order=5, only returns cases in which all '''
+    pass
+
+def test_interaction(base, true_model, knockout):
+    ''' Test if a given knockout has a full interaction (i.e. for a 5-KO,
+        if there is fifth order interaction). This is defined as:
+        - If at least one subset KO is lethal but the full KO is nonlethal,
+          then there is a full positive interaction 
+        - If all subset KOs are nonlethal but the full KO is lethal,
+          then there is a full negative interaction '''
+    order = len(knockout)
+    _, true_label = convert_knockout_to_tensor(base, true_model, [])
+    has_one_lethal = False # at least one subset KO is lethal
+    is_all_nonlethal = True # all subset KOs nonlethal
+    for ko_size in range(1, order):
+        for sub_knockout in itertools.combinations(knockout, ko_size):
+            _, target = convert_knockout_to_tensor(base, true_model, sub_knockout)
+            # TODO:
+#            lethal = 
 
 def generate_dcell_train_data(base, true_model, double_train_count=100000, 
                               double_test_count=20000, seed=1):
@@ -54,23 +78,29 @@ def convert_knockouts_to_tensor_dataset(base, true_model, knockouts, print_count
         
     ''' Generate feature and target tensors '''
     labels = {}
-#    features = torch.zeros([len(knockouts), DIM, DIM]).byte()
     features = torch.zeros([len(knockouts), DIM*DIM]).float()
     targets = torch.zeros(len(knockouts)).long()
     for i in range(len(knockouts)):
         if i % print_counter == 0:
             print('On image', i, 'of', len(knockouts))
-        pixel_indices = knockouts[i]
-        pixels = map(__get_pixel__, pixel_indices)
-        corrupted = __apply_corruptions__(image, pixels)
-        target = __get_prediction__(true_model, corrupted)
-#        features[i] = corrupted.data.byte()
-#        targets[i] = target.data.byte()[0]
-        features[i] = corrupted.view(1,1,DIM*DIM).data.float()
-        targets[i] = target.data.float()[0]
+        corrupted, target = convert_knockout_to_tensor(image, true_model, knockouts[i])
+        features[i] = corrupted
+        targets[i] = target
         labels[knockouts[i]] = target.data.byte()[0]
         
     return TensorDataset(features, targets), labels
+
+def convert_knockout_to_tensor(base, true_model, knockout):
+    ''' Given a base image (1x1xDIMxDIM tensor), a list of pixels to 
+        "knockout" or flip, and a true model, produces the tensor 
+        corresponding to the knockout image and its label '''    
+    pixel_indices = knockout
+    pixels = map(__get_pixel__, pixel_indices)
+    corrupted = __apply_corruptions__(base, pixels)
+    target = __get_prediction__(true_model, corrupted)
+    corrupted = corrupted.view(1,1,DIM*DIM).data.float()
+    target = target.data.float()[0]
+    return corrupted, target
 
 def generate_random_pixel_groups(size, count, seed=1):
     ''' Generates random pixel group without replacement. Returns a list of 

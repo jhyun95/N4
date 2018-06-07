@@ -199,8 +199,8 @@ def find_2nd_order_interactions(model, first_order_file=OUTPUT_1ST,
                         if is_lethal12: # both is = NEGATIVE interactions
                             negative_interactions.append((px1,px2))
         #                        print('NEGATIVE:', px1, px2, is_lethal1, is_lethal2, is_lethal12)
-            positives = len(positive_interactions); percent_positive = round(positives/total_pairs,3)
-            negatives = len(negative_interactions); percent_negative = round(negatives/total_pairs,3)
+            positives = len(positive_interactions); percent_positive = round(100*positives/total_pairs,3)
+            negatives = len(negative_interactions); percent_negative = round(100*negatives/total_pairs,3)
             print('Positive Interactions:', positives,  '(' + str(percent_positive) + '%)')
             print('Negative Interactions:', negatives,  '(' + str(percent_negative) + '%)')
             print('Time (seconds):', round(time.time() - start_time, 3))

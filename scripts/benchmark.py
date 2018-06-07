@@ -23,6 +23,20 @@ TEST_BATCH_SIZE = 1000
 LEARNING_RATE = 0.05
 MOMENTUM = 0.5
 
+''' Images most like real cell viability model '''
+WT_TEST = '0x1e000003e000007e000007e000007c000003c000000f8000000f0000003c000000600000038000001c000000e00000070001f8380007ff80001ff8000000000000000000000000000000000000000000'
+WT_TEST_LABEL = 5 # Image should be 5, ~14k positive interactions, ~140k negative interactions
+WT_A = '0x3000000f800000fc000007c000003c000003c000003c000007c000007c00000f800000f800000f800000f800000f000000f000001e000001e000001e000001c0000018000000000000000000000000'
+WT_B = '0x30000003800001b8000039c000071c0000f1c0001f9c0001ffc000003c000001c000001c000001c000000e000000c000000e000000e000000e000000e000000e00000020000000000000000'
+WT_C = '0x1ac00003fe00003fe00007f8000077c00007fe00007ff0000f8f000040780000038000003c000001c0000018000c038000e0f0000f3f0000ffe00007fc00007f000003c000000000000000000000000'
+WT_D = '0x180000018000003800003f000003e000003e000003c000007c000007e00000ee00001c6000038700007070000e070001c078001c070003c0f0003fff0003ffc0001ff000000000000000000000000000000000000000000000'
+WT_E = '0x60000007000000f000001fc00007ff8000f87c001f01e003e007003c00300380030000006000000e000000e000fc1c001ffb8003bff000383fc001fffc000ff180003c00000000000000000000000000000000000000'
+WT_A_LABEL = 1
+WT_B_LABEL = 4
+WT_C_LABEL = 5
+WT_D_LABEL = 0
+WT_E_LABEL = 2
+
 def main():
     ''' Initialize working directory and log '''
     if not os.path.isdir(WORKING_DIR):
@@ -33,8 +47,13 @@ def main():
     with LoggingPrinter(log_file):
         print('------ BEGIN LOG:', datetime.datetime.now(), '-----------------------------------')
         true_model = fit_true_model()
-        test_interactions(true_model) # only need to run this once
-#        benchmark_dcell(true_model, '', 5)
+        test_interactions(true_model) # only need to run this once per true model
+        benchmark_dcell(true_model, WT_TEST, WT_TEST_LABEL, model_name='DCell_test')
+        benchmark_dcell(true_model, WT_A, WT_A_LABEL, model_name='DCell_A')
+        benchmark_dcell(true_model, WT_B, WT_B_LABEL, model_name='DCell_B')
+        benchmark_dcell(true_model, WT_C, WT_C_LABEL, model_name='DCell_C')
+        benchmark_dcell(true_model, WT_D, WT_D_LABEL, model_name='DCell_D')
+        benchmark_dcell(true_model, WT_E, WT_E_LABEL, model_name='DCell_E')
         
 def fit_true_model():
     ''' Fit the true model '''
@@ -64,21 +83,17 @@ def test_interactions(true_model):
     find_2nd_order_interactions(true_model, first_order_file=FIRST_ORDER_FILE,
                                 output_file=SECOND_ORDER_FILE)
 
-def benchmark_dcell(true_model, wt_image_hex, wt_label):
+def benchmark_dcell(true_model, wt_image_hex, wt_label, model_name='DCell_E1'):
     ''' Benchmark DCell against a true model and a selected wildtype image '''
-
-#    BASE_IMAGE_HEX = wt_image_hex #'0x1e000003e000007e000007e000007c000003c000000f8000000f0000003c000000600000038000001c000000e00000070001f8380007ff80001ff8000000000000000000000000000000000000000000'
-#    TRUE_LABEL = wt_label #5 # Image should be 5, ~14k positive interactions, ~140k negative interactions
     CORRELATION_MODE = 'mcc-adj'
-    DCELL_MODEL_NAME = 'DCell_E1'
     DCELL_MODEL_EPOCHS = 1
     TEST_DATA_SEED = 1
     CLUSTER_THRESHOLD = 0.05
     MIN_CLUSTER_SIZE = 10
-    TRAINING_DOUBLE_COUNT = 100000
+    TRAINING_DOUBLE_COUNT = 50000
     VALIDATION_DOUBLE_COUNT = 20000
     EVALULATION_COUNT = 50000
-    MAX_EVAL_KNOCKOUT = 10
+    MAX_EVAL_KNOCKOUT = 15
        
     print('Base Image:', wt_image_hex)
     print('Base Image Label:', wt_label)
@@ -106,10 +121,10 @@ def benchmark_dcell(true_model, wt_image_hex, wt_label):
                             correlation_data_file=corr_path,
                             p_threshold=CLUSTER_THRESHOLD, 
                             min_cluster_size=MIN_CLUSTER_SIZE,
-                            plot_ontology=False)
+                            plot_ontology=True)
     
     ''' Load or train DCell-like model on synthetic data'''
-    dcell_path = WORKING_DIR + DCELL_MODEL_NAME
+    dcell_path = WORKING_DIR + model_name
     if os.path.isfile(dcell_path):
         print('Loading DCell model...')
         dcell_model.load_state_dict(torch.load(dcell_path))
