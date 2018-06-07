@@ -163,7 +163,7 @@ def find_2nd_order_interactions(model, first_order_file=OUTPUT_1ST,
     already_run = set()
     if not os.path.isfile(output_file): # initialize if not existent
         f = open(output_file, 'w+')
-        f.write('image_hex_string\tactual\tbase_prediction\tpositive_interactions\tnegative_interactions')
+        f.write('image_hex_string\tactual\tbase_prediction\tpositive_interactions\tnegative_interactions\n')
         f.close()
     else: # file already exists
         f = open(output_file, 'r+')
@@ -185,7 +185,7 @@ def find_2nd_order_interactions(model, first_order_file=OUTPUT_1ST,
             for i in range(DIM*DIM): # pixel 1
                 px1 = __get_pixel__(i)
                 is_lethal1 = px1 in lethal_pixels[hexstring]
-                for j in __get_pixel__(i): # pixel 2
+                for j in range(i): # pixel 2
                     px2 = __get_pixel__(j)
                     is_lethal2 = px2 in lethal_pixels[hexstring]
                     corrupted = __apply_corruptions__(data, [px1, px2])

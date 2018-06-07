@@ -31,29 +31,16 @@ def main():
     
     ''' Print to console and log file '''
     with LoggingPrinter(log_file):
-        benchmark()
-
-def benchmark():
+        print('------ BEGIN LOG:', datetime.datetime.now(), '-----------------------------------')
+        true_model = fit_true_model()
+        test_interactions(true_model) # only need to run this once
+#        benchmark_dcell(true_model, '', 5)
+        
+def fit_true_model():
+    ''' Fit the true model '''
     TRUE_MODEL_NAME = 'ConvNet_E20'
-    TRUE_MODEL_EPOCHS=20
-    BASE_IMAGE_HEX = '0x1e000003e000007e000007e000007c000003c000000f8000000f0000003c000000600000038000001c000000e00000070001f8380007ff80001ff8000000000000000000000000000000000000000000'
-    TRUE_LABEL = 5 # Image should be 5, ~14k positive interactions, ~140k negative interactions
-    CORRELATION_MODE = 'mcc-adj'
-    DCELL_MODEL_NAME = 'DCell_E1'
-    DCELL_MODEL_EPOCHS = 1
-    TEST_DATA_SEED = 1
-    CLUSTER_THRESHOLD = 0.05
-    MIN_CLUSTER_SIZE = 10
-    TRAINING_DOUBLE_COUNT = 100000
-    VALIDATION_DOUBLE_COUNT = 20000
-    EVALULATION_COUNT = 50000
-    MAX_EVAL_KNOCKOUT = 10
+    TRUE_MODEL_EPOCHS = 20
        
-    print('------ BEGIN LOG:', datetime.datetime.now(), '-----------------------------------')
-    print('Base Image:', BASE_IMAGE_HEX)
-    print('Base Image Label:', TRUE_LABEL)
-    print('Test Data Seed:', TEST_DATA_SEED)
-    
     ''' Load or train the "true" image model '''
     model_path = WORKING_DIR + TRUE_MODEL_NAME
     true_model = ConvNet()
@@ -65,26 +52,57 @@ def benchmark():
         true_model = train_true_model(true_model, epochs=TRUE_MODEL_EPOCHS)
         torch.save(true_model.state_dict(), model_path)
     true_model.eval()
+    return true_model
+
+def test_interactions(true_model):
+    ''' Test for single and pairwise pixel interactions, for wildtype
+        image selection. '''
+    from interactions import find_lethal_pixels, find_2nd_order_interactions
+    FIRST_ORDER_FILE = WORKING_DIR + '1st_order.tsv'
+    SECOND_ORDER_FILE = WORKING_DIR + '2nd_order.tsv'
+    find_lethal_pixels(true_model, output_file=FIRST_ORDER_FILE)
+    find_2nd_order_interactions(true_model, first_order_file=FIRST_ORDER_FILE,
+                                output_file=SECOND_ORDER_FILE)
+
+def benchmark_dcell(true_model, wt_image_hex, wt_label):
+    ''' Benchmark DCell against a true model and a selected wildtype image '''
+
+#    BASE_IMAGE_HEX = wt_image_hex #'0x1e000003e000007e000007e000007c000003c000000f8000000f0000003c000000600000038000001c000000e00000070001f8380007ff80001ff8000000000000000000000000000000000000000000'
+#    TRUE_LABEL = wt_label #5 # Image should be 5, ~14k positive interactions, ~140k negative interactions
+    CORRELATION_MODE = 'mcc-adj'
+    DCELL_MODEL_NAME = 'DCell_E1'
+    DCELL_MODEL_EPOCHS = 1
+    TEST_DATA_SEED = 1
+    CLUSTER_THRESHOLD = 0.05
+    MIN_CLUSTER_SIZE = 10
+    TRAINING_DOUBLE_COUNT = 100000
+    VALIDATION_DOUBLE_COUNT = 20000
+    EVALULATION_COUNT = 50000
+    MAX_EVAL_KNOCKOUT = 10
+       
+    print('Base Image:', wt_image_hex)
+    print('Base Image Label:', wt_label)
+    print('Test Data Seed:', TEST_DATA_SEED)
         
     ''' Analyze base image with respect to the true model '''
-    base_label = __get_prediction__(true_model, BASE_IMAGE_HEX)
-    if base_label != TRUE_LABEL:
+    base_label = __get_prediction__(true_model, wt_image_hex)
+    if base_label != wt_label:
         print('WARNING: True model incorrectly labels the base image')
         sys.exit(1)
     else:
-        print('True model and label agree for base image:', TRUE_LABEL)
+        print('True model and label agree for base image:', wt_label)
     
     ''' From target label, pre-compute pixel correlations for DCell model '''
-    corr_path = WORKING_DIR + 'pixel-' + str(TRUE_LABEL) +  \
+    corr_path = WORKING_DIR + 'pixel-' + str(wt_label) +  \
                     '-' + CORRELATION_MODE + '.csv.gz'
     if not os.path.isfile(corr_path):
-        find_pixel_correlations(true_model, labelset=TRUE_LABEL, 
+        find_pixel_correlations(true_model, labelset=wt_label, 
                                 check_consistency=True, mode=CORRELATION_MODE, 
                                 output_file=corr_path)
     
     ''' Initialize DCell-like network from correlations for image label '''
     print('Initializing DCell network...')
-    dcell_model = make_dcellnet_for_label(true_model, label=TRUE_LABEL, 
+    dcell_model = make_dcellnet_for_label(true_model, label=wt_label, 
                             correlation_data_file=corr_path,
                             p_threshold=CLUSTER_THRESHOLD, 
                             min_cluster_size=MIN_CLUSTER_SIZE,
@@ -98,7 +116,7 @@ def benchmark():
     else:
         print('Generating DCell test data (WT, all single KOs, some double KOs)...')
         train_dataset, test_dataset, train_labels, test_labels = \
-            generate_dcell_train_data(BASE_IMAGE_HEX, true_model, 
+            generate_dcell_train_data(wt_image_hex, true_model, 
                 double_train_count=TRAINING_DOUBLE_COUNT,
                 double_test_count=VALIDATION_DOUBLE_COUNT, 
                 seed=TEST_DATA_SEED)
@@ -112,7 +130,7 @@ def benchmark():
     ''' Evaluate DCell-like model on higher order knockouts '''
     for i in range(2,MAX_EVAL_KNOCKOUT+1):
         print('Testing', str(i)+'-knockouts...')
-        eval_dataset, eval_labels = generate_dcell_eval_data(BASE_IMAGE_HEX, 
+        eval_dataset, eval_labels = generate_dcell_eval_data(wt_image_hex, 
             true_model, order=i, count=EVALULATION_COUNT, seed=TEST_DATA_SEED)
         eval_loader = torch.utils.data.DataLoader(eval_dataset, batch_size=TEST_BATCH_SIZE)
         test_model(dcell_model, eval_loader)
