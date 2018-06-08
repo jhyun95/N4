@@ -9,40 +9,84 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+MODELS = ['DCell_A', 'DCell_B', 'DCell_C', 'DCell_D', 'DCell_E']
+EPOCHS_IN_LOG = 5
+
 def main():
-#    pairwise_interaction_plots()
+#    plot_pairwise_interaction()
 #    parse_log(log_file='/mnt/346490BF64908570/log_min20_epochs5.txt',
 #              out_fit_file='../fitting.csv')
     parse_log()
+    plot_training_performance()
+    plot_evaluation_performance()
+    
+def plot_evaluation_performance(eval_file='../data/DCell_test/evaluation.csv'):
+    df = pd.read_csv(eval_file)
+    rows, cols = df.shape
+    KO_counts = range(2,15+1)
+    fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(6.5,3))
+    for m in range(len(MODELS)):
+        mcc = []; acc = []; label = MODELS[m]
+        for i in range(len(KO_counts)):
+            row_ind = len(KO_counts) * m + i
+#            KO_order = df[row_ind]['KO_order']
+            mcc.append(df[row_ind]['MCC'])
+            acc.append(df[row_ind]['ACC'])
+        axs[0].plot(KO_counts, mcc, label=label)
+        axs[1].plot(KO_counts, acc, label=label)
+    axs[0].set_title('MCC versus KO order')
+    axs[1].set_title('Accuracy versus KOorder')
+    axs[0].legend()
+    axs[0].set_ylabel('MCC')
+    axs[1].set_ylabel('Accuracy')
+    axs[0].set_xlabel('KO order')
+    axs[1].set_xlabel('KO order')
+    plt.tight_layout()
+    
+def plot_training_performance(perf_file='../data/DCell_test/fitting.csv'):
+    df = pd.read_csv(perf_file, index_col=0)
+    fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(6.5,3), sharey=True)
+    x = range(EPOCHS_IN_LOG + 1)
+    for i in range(len(MODELS)):
+        training_mcc = df.values[:,i+len(MODELS)]
+        testing_mcc = df.values[:,i]
+        label = MODELS[i]
+        axs[0].plot(x, training_mcc, label=label)
+        axs[1].plot(x, testing_mcc, label=label)
+    axs[0].set_title('MCC for training set')
+    axs[1].set_title('MCC for testing set')
+    axs[0].legend()
+    axs[0].set_ylabel('MCC')
+    axs[0].set_xlabel('Epoch')
+    axs[1].set_xlabel('Epoch')
+    plt.tight_layout()
     
 def parse_log(log_file='../data/DCell_test/log_min20_epochs5_extended.txt',
               out_eval_file='../data/DCell_test/evaluation.csv',
               out_fit_file='../data/DCell_test/fitting.csv'):
-    models = ['DCell_A', 'DCell_B', 'DCell_C', 'DCell_D', 'DCell_E']
-
     ''' Extract ACC and MCC curves for each model '''
-    raw_values = []
-    for line in open(log_file, 'r+'):
-        if line[0] == '>':
-            value = line.split(':')[-1].strip()
-            value = float(value) if '.' in value else int(value)
-            raw_values.append(value)
-    max_KO = 15
-    KO_counts = range(2,max_KO+1)
-    df = pd.DataFrame(columns=['model', 'KO_order', 
-        'MCC', 'ACC', 'TP', 'FP', 'FN', 'TN'])
-    row_num = 0; model_ID = 0; KO_ID = 0
-    for i in range(0,len(raw_values),6):
-        model = models[model_ID]
-        KOcount = KO_counts[KO_ID]
-        df.loc[row_num] = [model, KOcount] + raw_values[i:i+6] 
-        KO_ID += 1
-        if KO_ID >= len(KO_counts):
-            KO_ID = 0; model_ID += 1
-    df.to_csv(out_eval_file, sep=',', index=False)
+#    raw_values = []
+#    for line in open(log_file, 'r+'):
+#        if line[0] == '>':
+#            value = line.split(':')[-1].strip()
+#            value = float(value) if '.' in value else int(value)
+#            raw_values.append(value)
+#    max_KO = 15
+#    KO_counts = range(2,max_KO+1)
+#    df = pd.DataFrame(columns=['model', 'KO_order', 
+#        'MCC', 'ACC', 'TP', 'FP', 'FN', 'TN'])
+#    row_num = 0; model_ID = 0; KO_ID = 0
+#    for i in range(0,len(raw_values),6):
+#        model = MODELS[model_ID]
+#        KOcount = KO_counts[KO_ID]
+#        df.loc[row_num] = [model, KOcount] + raw_values[i:i+6] 
+#        KO_ID += 1
+#        if KO_ID >= len(KO_counts):
+#            KO_ID = 0; model_ID += 1
+#    df.to_csv(out_eval_file, sep=',', index=False)
 
     ''' Extract testing and training MCC curves vs epoch '''
-    epochs = 5
+    epochs = EPOCHS_IN_LOG
     training = []; testing = []
     for line in open(log_file, 'r+'):
         if 'Training MCC' in line:
@@ -57,14 +101,14 @@ def parse_log(log_file='../data/DCell_test/log_min20_epochs5_extended.txt',
                        'E_train_mcc'])
     df.loc[0] = [0,0,0,0,0,0,0,0,0,0,0]
     for i in range(epochs):
-        training_mccs = map(lambda x: training[i+epochs*x], range(len(models)))
-        testing_mccs = map(lambda x: testing[i+epochs*x], range(len(models)))
+        training_mccs = map(lambda x: training[i+epochs*x], range(len(MODELS)))
+        testing_mccs = map(lambda x: testing[i+epochs*x], range(len(MODELS)))
         row = [i+1] + list(testing_mccs) + list(training_mccs)
         df.loc[i+1] = row
-    df.to_csv(out_fit_file, sep=',', index_label='epoch')
+    df.to_csv(out_fit_file, sep=',', index=False)
   
     
-def pairwise_interaction_plots():
+def plot_pairwise_interaction():
     DIM = 28
     FIRST_ORDER_FILE = '../data/DCell_test/1st_order.tsv'
     SECOND_ORDER_FILE = '../data/DCell_test/2nd_order.tsv'
