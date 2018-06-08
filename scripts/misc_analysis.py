@@ -10,7 +10,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 MODELS = ['DCell_A', 'DCell_B', 'DCell_C', 'DCell_D', 'DCell_E']
-EPOCHS_IN_LOG = 5
+EPOCHS_IN_LOG = 100
 
 def main():
 #    plot_pairwise_interaction()
@@ -21,6 +21,7 @@ def main():
     plot_evaluation_performance()
     
 def plot_evaluation_performance(eval_file='../data/DCell_test/evaluation.csv'):
+    ''' Plots the MCC and ACC during evaluation against different sized KOs '''
     df = pd.read_csv(eval_file)
     rows, cols = df.shape
     KO_counts = range(2,15+1)
@@ -29,21 +30,21 @@ def plot_evaluation_performance(eval_file='../data/DCell_test/evaluation.csv'):
         mcc = []; acc = []; label = MODELS[m]
         for i in range(len(KO_counts)):
             row_ind = len(KO_counts) * m + i
-#            KO_order = df[row_ind]['KO_order']
-            mcc.append(df[row_ind]['MCC'])
-            acc.append(df[row_ind]['ACC'])
+            mcc.append(df.loc[row_ind, 'MCC'])
+            acc.append(df.loc[row_ind, 'ACC'])
         axs[0].plot(KO_counts, mcc, label=label)
         axs[1].plot(KO_counts, acc, label=label)
-    axs[0].set_title('MCC versus KO order')
-    axs[1].set_title('Accuracy versus KOorder')
+    axs[0].set_title('MCC versus KO size')
+    axs[1].set_title('Accuracy versus KO size')
     axs[0].legend()
     axs[0].set_ylabel('MCC')
     axs[1].set_ylabel('Accuracy')
-    axs[0].set_xlabel('KO order')
-    axs[1].set_xlabel('KO order')
+    axs[0].set_xlabel('KO size')
+    axs[1].set_xlabel('KO size')
     plt.tight_layout()
     
 def plot_training_performance(perf_file='../data/DCell_test/fitting.csv'):
+    ''' Plots the MCC in the training and testing sets vs. epoch '''
     df = pd.read_csv(perf_file, index_col=0)
     fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(6.5,3), sharey=True)
     x = range(EPOCHS_IN_LOG + 1)
@@ -61,29 +62,30 @@ def plot_training_performance(perf_file='../data/DCell_test/fitting.csv'):
     axs[1].set_xlabel('Epoch')
     plt.tight_layout()
     
-def parse_log(log_file='../data/DCell_test/log_min20_epochs5_extended.txt',
+def parse_log(log_file='../data/DCell_test/log_min20_epochs100_extended.txt',
               out_eval_file='../data/DCell_test/evaluation.csv',
               out_fit_file='../data/DCell_test/fitting.csv'):
     ''' Extract ACC and MCC curves for each model '''
-#    raw_values = []
-#    for line in open(log_file, 'r+'):
-#        if line[0] == '>':
-#            value = line.split(':')[-1].strip()
-#            value = float(value) if '.' in value else int(value)
-#            raw_values.append(value)
-#    max_KO = 15
-#    KO_counts = range(2,max_KO+1)
-#    df = pd.DataFrame(columns=['model', 'KO_order', 
-#        'MCC', 'ACC', 'TP', 'FP', 'FN', 'TN'])
-#    row_num = 0; model_ID = 0; KO_ID = 0
-#    for i in range(0,len(raw_values),6):
-#        model = MODELS[model_ID]
-#        KOcount = KO_counts[KO_ID]
-#        df.loc[row_num] = [model, KOcount] + raw_values[i:i+6] 
-#        KO_ID += 1
-#        if KO_ID >= len(KO_counts):
-#            KO_ID = 0; model_ID += 1
-#    df.to_csv(out_eval_file, sep=',', index=False)
+    raw_values = []
+    for line in open(log_file, 'r+'):
+        if line[0] == '>':
+            value = line.split(':')[-1].strip()
+            value = float(value) if '.' in value else int(value)
+            raw_values.append(value)
+    print(raw_values)
+    max_KO = 15
+    KO_counts = range(2,max_KO+1)
+    df = pd.DataFrame(columns=['model', 'KO_order', 
+        'MCC', 'ACC', 'TP', 'FP', 'FN', 'TN'])
+    row_num = 0; model_ID = 0; KO_ID = 0
+    for i in range(0,len(raw_values),6):
+        model = MODELS[model_ID]
+        KOcount = KO_counts[KO_ID]
+        df.loc[row_num] = [model, KOcount] + raw_values[i:i+6] 
+        row_num += 1; KO_ID += 1
+        if KO_ID >= len(KO_counts):
+            KO_ID = 0; model_ID += 1
+    df.to_csv(out_eval_file, sep=',', index=False)
 
     ''' Extract testing and training MCC curves vs epoch '''
     epochs = EPOCHS_IN_LOG
