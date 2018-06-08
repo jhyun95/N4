@@ -10,25 +10,58 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 def main():
-    pairwise_interaction_plots()
+#    pairwise_interaction_plots()
+#    parse_log(log_file='/mnt/346490BF64908570/log_min20_epochs5.txt',
+#              out_fit_file='../fitting.csv')
+    parse_log()
     
 def parse_log(log_file='../data/DCell_test/log_min20_epochs5_extended.txt',
-              out_file='../data/DCell_test/performance.csv'):
+              out_eval_file='../data/DCell_test/evaluation.csv',
+              out_fit_file='../data/DCell_test/fitting.csv'):
+    models = ['DCell_A', 'DCell_B', 'DCell_C', 'DCell_D', 'DCell_E']
+
+    ''' Extract ACC and MCC curves for each model '''
     raw_values = []
     for line in open(log_file, 'r+'):
         if line[0] == '>':
             value = line.split(':')[-1].strip()
             value = float(value) if '.' in value else int(value)
             raw_values.append(value)
-    models = ['DCell_A', 'DCell_B', 'DCell_C', 'DCell_D', 'DCell_E']
-    KOcounts = range(2,15+1)
-    
-    df = pd.DataFrame(['model', 'KO_order', 'MCC', 'ACC', 'TP', 'FP', 'FN', 'TN'])
-    for i in range(len(raw_values)):
-        pass # TODO
-        
-    
-    
+    max_KO = 15
+    KO_counts = range(2,max_KO+1)
+    df = pd.DataFrame(columns=['model', 'KO_order', 
+        'MCC', 'ACC', 'TP', 'FP', 'FN', 'TN'])
+    row_num = 0; model_ID = 0; KO_ID = 0
+    for i in range(0,len(raw_values),6):
+        model = models[model_ID]
+        KOcount = KO_counts[KO_ID]
+        df.loc[row_num] = [model, KOcount] + raw_values[i:i+6] 
+        KO_ID += 1
+        if KO_ID >= len(KO_counts):
+            KO_ID = 0; model_ID += 1
+    df.to_csv(out_eval_file, sep=',', index=False)
+
+    ''' Extract testing and training MCC curves vs epoch '''
+    epochs = 5
+    training = []; testing = []
+    for line in open(log_file, 'r+'):
+        if 'Training MCC' in line:
+            training.append( float(line.split()[2]) )
+        elif 'Testing MCC' in line:
+            testing.append( float(line.split()[2]) )
+    df = pd.DataFrame(columns=['epoch', 'A_test_mcc', 
+                       'B_test_mcc', 'C_test_mcc', 
+                       'D_test_mcc', 'E_test_mcc',
+                       'A_train_mcc', 'B_train_mcc',
+                       'C_train_mcc', 'D_train_mcc',
+                       'E_train_mcc'])
+    df.loc[0] = [0,0,0,0,0,0,0,0,0,0,0]
+    for i in range(epochs):
+        training_mccs = map(lambda x: training[i+epochs*x], range(len(models)))
+        testing_mccs = map(lambda x: testing[i+epochs*x], range(len(models)))
+        row = [i+1] + list(testing_mccs) + list(training_mccs)
+        df.loc[i+1] = row
+    df.to_csv(out_fit_file, sep=',', index_label='epoch')
   
     
 def pairwise_interaction_plots():
