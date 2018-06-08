@@ -10,6 +10,28 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 def main():
+    pairwise_interaction_plots()
+    
+def parse_log(log_file='../data/DCell_test/log_min20_epochs5_extended.txt',
+              out_file='../data/DCell_test/performance.csv'):
+    raw_values = []
+    for line in open(log_file, 'r+'):
+        if line[0] == '>':
+            value = line.split(':')[-1].strip()
+            value = float(value) if '.' in value else int(value)
+            raw_values.append(value)
+    models = ['DCell_A', 'DCell_B', 'DCell_C', 'DCell_D', 'DCell_E']
+    KOcounts = range(2,15+1)
+    
+    df = pd.DataFrame(['model', 'KO_order', 'MCC', 'ACC', 'TP', 'FP', 'FN', 'TN'])
+    for i in range(len(raw_values)):
+        pass # TODO
+        
+    
+    
+  
+    
+def pairwise_interaction_plots():
     DIM = 28
     FIRST_ORDER_FILE = '../data/DCell_test/1st_order.tsv'
     SECOND_ORDER_FILE = '../data/DCell_test/2nd_order.tsv'
@@ -37,7 +59,6 @@ def main():
     df_2nd.sort_values('difference', inplace=True)
     print(df_2nd.head())
     
-    
     ''' Separate histograms for interaction counts '''
 #    fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(6.5,3))
 #    bins = np.arange(0,10.5,0.5)
@@ -48,12 +69,12 @@ def main():
 #    axs[1].set_ylim([0,20]); axs[1].set_yticks(yticks)
     
     ''' Single scatterplot for interaction counts '''
-#    fig, ax = plt.subplots(1, 1, figsize=(6,4))
-#    ax.scatter(pos_ints, neg_ints, label='images')
-#    ax.scatter([REAL_PINT], [REAL_NINT], label='yeast')
-#    ax.set_xlabel('% of pairs with positive interactions')
-#    ax.set_ylabel('% of pairs with negative interactions')
-#    plt.legend(loc='upper right')  
+    fig, ax = plt.subplots(1, 1, figsize=(6,4))
+    ax.scatter(pos_ints, neg_ints, label='images')
+    ax.scatter([REAL_PINT], [REAL_NINT], label='yeast')
+    ax.set_xlabel('% of pairs with positive interactions')
+    ax.set_ylabel('% of pairs with negative interactions')
+    plt.legend(loc='upper right')
     
 if __name__ == '__main__':
     main()

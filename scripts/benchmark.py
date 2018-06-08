@@ -16,8 +16,8 @@ from data_generator import generate_dcell_train_data, generate_dcell_eval_data
 
 ''' Global pipeline parameters '''
 WORKING_DIR = '../data/DCell_test/'
-TRAIN_BATCH_SIZE = 64
-TEST_BATCH_SIZE = 1000
+TRAIN_BATCH_SIZE = 1024
+TEST_BATCH_SIZE = 1024
 LEARNING_RATE = 0.05
 MOMENTUM = 0.5
 
@@ -39,7 +39,7 @@ def main():
     ''' Initialize working directory and log '''
     if not os.path.isdir(WORKING_DIR):
         os.mkdir(WORKING_DIR)
-    log_file = WORKING_DIR + 'log_min20_epochs5.txt'
+    log_file = WORKING_DIR + 'log_min20_epochs100_extended.txt'
     
     ''' Print to console and log file '''
     with LoggingPrinter(log_file):
@@ -80,7 +80,7 @@ def test_interactions(true_model):
 def benchmark_dcell(true_model, wt_image_hex, wt_label, model_name='DCell_E1'):
     ''' Benchmark DCell against a true model and a selected wildtype image '''
     CORRELATION_MODE = 'mcc-adj'
-    DCELL_MODEL_EPOCHS = 5 # number of epochs to train the DCell model
+    DCELL_MODEL_EPOCHS = 100 # number of epochs to train the DCell model
     TEST_DATA_SEED = 1 # randomization seed for generating synthetic data
     CLUSTER_THRESHOLD = 0.05 # p-value cutoff of hierarchical clustering
     MIN_CLUSTER_SIZE = 10 # minimum cluster size for hierarchical clustering
@@ -133,9 +133,12 @@ def benchmark_dcell(true_model, wt_image_hex, wt_label, model_name='DCell_E1'):
                 double_test_count=VALIDATION_DOUBLE_COUNT, 
                 seed=TEST_DATA_SEED)
         print('Training DCell model on synthetic data...')
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE)
-        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=TEST_BATCH_SIZE)
-        dcell_model = train_dcell_model(dcell_model, train_loader, test_loader, epochs=DCELL_MODEL_EPOCHS)
+        train_frac_pos = sum(train_labels.values()) / len(train_labels)
+        print('Training data fraction positives:', train_frac_pos)
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True)
+        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=TEST_BATCH_SIZE, shuffle=True)
+        dcell_model = train_dcell_model(dcell_model, train_loader, test_loader, 
+                            train_frac_pos, epochs=DCELL_MODEL_EPOCHS)
         torch.save(dcell_model.state_dict(), dcell_path)
     dcell_model.eval()
     
@@ -145,10 +148,16 @@ def benchmark_dcell(true_model, wt_image_hex, wt_label, model_name='DCell_E1'):
         eval_dataset, eval_labels = generate_dcell_eval_data(wt_image_hex, 
             true_model, order=i, count=EVALULATION_COUNT, seed=TEST_DATA_SEED)
         eval_loader = torch.utils.data.DataLoader(eval_dataset, batch_size=TEST_BATCH_SIZE)
-        eval_corr, eval_acc = test_dcell_model_single(dcell_model, eval_loader)
-        print('MCC:', eval_corr)
-        print('ACC:', eval_acc)
-
+        eval_corr, eval_acc, eval_counts = test_dcell_model_single(dcell_model, eval_loader)
+        TPs, FPs, FNs, TNs = eval_counts
+        print('> MCC:', eval_corr)
+        print('> ACC:', eval_acc)
+        print('> TPs:', TPs)
+        print('> FPs:', FPs)
+        print('> FNs:', FNs)
+        print('> TNs:', TNs)
+        
+    
 class LoggingPrinter:
     ''' Used to simultaneously print to file and console '''
     #https://stackoverflow.com/questions/24204898/python-output-on-both-console-and-file

@@ -89,7 +89,7 @@ def convert_knockouts_to_tensor_dataset(base, true_model, knockouts, print_count
         features[i] = corrupted
         targets[i] = target
         labels[knockouts[i]] = target
-        
+
     return TensorDataset(features, targets), labels
 
 

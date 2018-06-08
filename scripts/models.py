@@ -54,10 +54,9 @@ def main():
 #    model = models.ConvNet()
 #    model.load_state_dict(torch.load('../models/ConvNet_E10'))
         
-def train_dcell_model(model, train_loader, test_loader, 
-                      learning_rate=0.01, epochs=1, 
-                      betas=(0.9,0.99), eps=1e-05,
-                      log_interval=25):
+def train_dcell_model(model, train_loader, test_loader, train_frac_pos,
+                      learning_rate=0.001, epochs=1, betas=(0.9,0.99), 
+                      eps=1e-5, log_interval=5):
     ''' Train DCell model using ADAM, adapted from jisoo's code,
         primarily code for train_dcell_model_single '''
         
@@ -77,19 +76,23 @@ def train_dcell_model(model, train_loader, test_loader,
             param.data = param.data * 0.1
     
     ''' Optimization loop with ADAM '''
+    best_model = model; best_test_mcc = 0.0
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, betas=betas, eps=eps)
     for epoch in range(1,epochs+1):
-        model, train_corr, train_acc = train_dcell_model_single(model, loss_map,
-            term_mask_map, train_loader, optimizer, epoch, log_interval)
-        test_corr, test_acc = test_dcell_model_single(model, test_loader)
+        model, train_corr, train_acc, train_counts = train_dcell_model_single(
+            model, loss_map, term_mask_map, train_loader, train_frac_pos, optimizer, epoch, log_interval)
+        test_corr, test_acc, test_counts = test_dcell_model_single(model, test_loader)
         
         train_corr = round(train_corr, 4); train_acc = round(train_acc, 4)
         test_corr = round(test_corr, 4); test_acc = round(test_acc, 4)
         print('Epoch:', epoch)
         print('\tTraining MCC:', train_corr, '\tTraining ACC:', train_acc)
         print('\t Testing MCC:', test_corr, '\t Testing ACC:', test_acc)
-        
-    return model
+        if test_corr > best_test_mcc:
+            best_model = model; best_test_mcc = test_corr
+    
+    print('Best model had MCC:', best_test_mcc)
+    return best_model
 
 def test_dcell_model_single(model, test_loader):
     ''' Testing step for DCell model, single epoch '''
@@ -97,32 +100,40 @@ def test_dcell_model_single(model, test_loader):
     predictions = torch.zeros(0, 0); truth = torch.zeros(0, 0)
     for batch_idx, (data, target) in enumerate(test_loader):
         target = target.float().view(-1,1)
-        aux_out_map,_ = model(data)
-        batch_predictions = (aux_out_map[model.root] > 0.5).float()
+        aux_out_map, _ = model(data)
+        batch_predictions = (aux_out_map[model.root] > 0.0).float()
         predictions = torch.cat([predictions, batch_predictions], 0)
         truth = torch.cat([truth, target], 0)
         
-    test_corr, test_acc = compute_mcc_and_accuracy(predictions, truth)
-    return test_corr, test_acc
+    test_corr, test_acc, test_counts = compute_performance(predictions, truth)
+    return test_corr, test_acc, test_counts
 
-def train_dcell_model_single(model, loss_map, term_mask_map, train_loader, optimizer, epoch, log_interval=25):
-    ''' Training step for DCell model, single epoch '''
+def train_dcell_model_single(model, loss_map, term_mask_map, train_loader, 
+                             fraction_positive, optimizer, epoch, log_interval=25):
+    ''' Training step for DCell model, single epoch, based on jisoo's code '''
     model.train()
     predictions = torch.zeros(0, 0); truth = torch.zeros(0, 0)
     for batch_idx, (data, target) in enumerate(train_loader):
         ''' Forward step: Get values at each node '''
         target = target.float().view(-1,1) # cast to float for MSE loss
+        tanh_target = target * 2 - 1 # map from 0/1 to -1/+1, to better match tanh layer output
         optimizer.zero_grad()
         aux_out_map, _ = model(data) # float values at each node
         
         ''' Backward step: Compute total loss, based on loss at the root 
-            output plus 0.2 times the loss at each node '''
+            output plus 0.2 times the loss at each node. Loss is weighted
+            based on the inverse of the frequency each class '''
         total_loss = 0
+        neg_weight = fraction_positive / (1 - fraction_positive)
+        weights = neg_weight - (neg_weight - 1) * target
+
         for term, loss in loss_map.items():
             term_outputs = aux_out_map[term]
-            term_loss = loss_map[term](term_outputs, target)
-            scale = 1.0 if term == model.root else 0.2
-            total_loss += scale * term_loss
+            weighted_outputs = torch.mul(term_outputs, weights)
+            weighted_targets = torch.mul(tanh_target, weights)
+            term_loss = loss_map[term](weighted_outputs, weighted_targets)
+            is_root_scale = 1.0 if term == model.root else 0.2
+            total_loss += is_root_scale * term_loss
         total_loss.backward()
         
         ''' Mask edges between nodes and unrelated inputs as 0 '''
@@ -140,30 +151,37 @@ def train_dcell_model_single(model, loss_map, term_mask_map, train_loader, optim
                 100. * batch_idx / len(train_loader), total_loss.item()))
         
         ''' Log predictions and truth values for MCC calculation '''
-        batch_predictions = (aux_out_map[model.root] > 0.5).float()
+        batch_predictions = (aux_out_map[model.root] > 0.0).float()
         predictions = torch.cat([predictions, batch_predictions], 0)
         truth = torch.cat([truth, target], 0)
         
     ''' Evalulate prediction performance with regards to the 
         original binary prediction target '''
-    train_corr, train_acc = compute_mcc_and_accuracy(predictions, truth)
-    return model, train_corr, train_acc
+    train_corr, train_acc, train_counts = compute_performance(predictions, truth)
+    return model, train_corr, train_acc, train_counts
 
-def compute_mcc_and_accuracy(predictions, truth, use_pseudocounts=True):
-    ''' Computes Matthews Correlation Coefficiency and overall accuracy '''
+def compute_performance(predictions, truth, use_pseudocounts=True):
+    ''' Computes Matthews Correlation Coefficiency and overall accuracy,
+        as well as general TP/FP/FN/TN counts '''
     pred_np = predictions.view(-1).data.numpy().astype(np.int)
     truth_np = truth.view(-1).data.numpy().astype(np.int)
-    if use_pseudocounts: # add 1 of each case to counts
+    
+    TPs = np.sum( np.logical_and(pred_np, truth_np) )
+    FPs = np.sum(pred_np) - TPs
+    num_wrong = np.sum( np.logical_xor(pred_np, truth_np) )
+    FNs = num_wrong - FPs
+    TNs = len(pred_np) - TPs - FPs - FNs
+    accuracy = 1.0 - num_wrong / len(pred_np)
+    
+    if use_pseudocounts: # add 1 of each case to counts for computing MCC
         pred_pseudo = np.array([0,0,1,1])
         truth_pseudo = np.array([0,1,0,1])
         pred_np = np.concatenate([pred_np, pred_pseudo])
         truth_np = np.concatenate([truth_np, truth_pseudo])
-    num_wrong = np.sum( np.logical_xor(pred_np, truth_np) )
-    accuracy = 1.0 - num_wrong / len(pred_np)
     truth_np = (2 * (truth_np - 0.5)).astype(np.int) # from 0/1 to -1/+1
     pred_np = (2 * (pred_np - 0.5)).astype(np.int) # from 0/1 to -1/+1
     mcc = matthews_corrcoef(truth_np, pred_np)
-    return mcc, accuracy
+    return mcc, accuracy, [TPs, FPs, FNs, TNs]
 
 def create_dcell_term_mask(dcell_model):
     ''' For DCell-like models:
