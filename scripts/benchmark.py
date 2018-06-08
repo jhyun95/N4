@@ -39,7 +39,7 @@ def main():
     ''' Initialize working directory and log '''
     if not os.path.isdir(WORKING_DIR):
         os.mkdir(WORKING_DIR)
-    log_file = WORKING_DIR + 'log_min1.txt'
+    log_file = WORKING_DIR + 'log_min20_epochs5.txt'
     
     ''' Print to console and log file '''
     with LoggingPrinter(log_file):
@@ -80,15 +80,15 @@ def test_interactions(true_model):
 def benchmark_dcell(true_model, wt_image_hex, wt_label, model_name='DCell_E1'):
     ''' Benchmark DCell against a true model and a selected wildtype image '''
     CORRELATION_MODE = 'mcc-adj'
-    DCELL_MODEL_EPOCHS = 2 # number of epochs to train the DCell model
+    DCELL_MODEL_EPOCHS = 5 # number of epochs to train the DCell model
     TEST_DATA_SEED = 1 # randomization seed for generating synthetic data
     CLUSTER_THRESHOLD = 0.05 # p-value cutoff of hierarchical clustering
     MIN_CLUSTER_SIZE = 10 # minimum cluster size for hierarchical clustering
     TRAINING_DOUBLE_COUNT = 100000 # number of double KOs to train DCell with
     VALIDATION_DOUBLE_COUNT = 20000 # not that important, quick check for robustness
     MAX_EVAL_KNOCKOUT = 15 # evaluate up to KOs of this size
-    EVALULATION_COUNT = 100000 # number of higher order KOs to test per size
-    MIN_NEURONS_PER_TERM = 5 # default is 15
+    EVALULATION_COUNT = 50000 # number of higher order KOs to test per size
+    MIN_NEURONS_PER_TERM = 20 # default is 20 in the paper
     PLOT_ONTOLOGY = False # plot the DCell ontology
        
     print('Base Image:', wt_image_hex)
