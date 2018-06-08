@@ -67,7 +67,8 @@ def generate_dcell_train_data(base, true_model, double_train_count=100000,
     
     return train_dataset, test_dataset, train_labels, test_labels
 
-def convert_knockouts_to_tensor_dataset(base, true_model, knockouts, print_counter=5000):
+
+def convert_knockouts_to_tensor_dataset(base, true_model, knockouts, print_counter=10000):
     ''' Takes a list of lists, where each sublist corresponds to a set 
         of pixels to flip or "knockout" relative to a base image. 
         Map each knockout to a tensor to create TensorDataset '''
@@ -75,6 +76,7 @@ def convert_knockouts_to_tensor_dataset(base, true_model, knockouts, print_count
         image = __hex_to_image__(base)
     else: # image tensor provided, shape to DIMxDIM
         image = base.view(1,1,DIM,DIM)
+    base_label = __get_prediction__(true_model, image).item()
         
     ''' Generate feature and target tensors '''
     labels = {}
@@ -83,24 +85,31 @@ def convert_knockouts_to_tensor_dataset(base, true_model, knockouts, print_count
     for i in range(len(knockouts)):
         if i % print_counter == 0:
             print('On image', i, 'of', len(knockouts))
-        corrupted, target = convert_knockout_to_tensor(image, true_model, knockouts[i])
+        corrupted, target = convert_knockout_to_tensor(image, true_model, knockouts[i], base_label)
         features[i] = corrupted
         targets[i] = target
-        labels[knockouts[i]] = target.data.byte()[0]
+        labels[knockouts[i]] = target
         
     return TensorDataset(features, targets), labels
 
-def convert_knockout_to_tensor(base, true_model, knockout):
+
+def convert_knockout_to_tensor(base, true_model, knockout, base_label=None):
     ''' Given a base image (1x1xDIMxDIM tensor), a list of pixels to 
         "knockout" or flip, and a true model, produces the tensor 
-        corresponding to the knockout image and its label '''    
+        corresponding to the knockout image and its label.
+        If base_label is None, the target is just the label of the KO image.
+        If base_label is an int, the target is either 0 (KO label != WT label) 
+        or 1 (KO label == WT label); binary indicator for image corruption '''    
     pixel_indices = knockout
     pixels = map(__get_pixel__, pixel_indices)
     corrupted = __apply_corruptions__(base, pixels)
     target = __get_prediction__(true_model, corrupted)
     corrupted = corrupted.view(1,1,DIM*DIM).data.float()
-    target = target.data.float()[0]
+    target = target.item()
+    if not base_label is None: # binary, whether or not image was corrupted
+        target = int(base_label == target)
     return corrupted, target
+
 
 def generate_random_pixel_groups(size, count, seed=1):
     ''' Generates random pixel group without replacement. Returns a list of 

@@ -8,6 +8,7 @@ Created on Mon Apr  9 03:13:28 2018
 import sys
 import numpy as np
 import networkx as nx
+from sklearn.metrics import matthews_corrcoef
 
 import torch
 import torch.nn as nn
@@ -20,7 +21,7 @@ import torch.optim as optim
 
 def main():
     # Training settings   
-    CUDA = False; #torch.cuda.is_available() 
+    CUDA = False
     INPUT_BATCH = 64
     TEST_BATCH = 1000
     LEARNING_RATE = 0.01
@@ -29,8 +30,7 @@ def main():
     EPOCHS = 10
     LOG_INTERVAL = 25  
 #    torch.manual_seed(args.seed)  
-#    if CUDA:
-#        torch.cuda.manual_seed(args.seed)
+
     
     ''' Download and normalize data set '''
     #kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
@@ -46,40 +46,166 @@ def main():
     
     ''' Model training epochs, PICK MODEL TYPE HERE '''
     model = ConvNet() 
-#    if CUDA:
-#        model.cuda()
     optimizer = optim.SGD(model.parameters(), lr=LEARNING_RATE, momentum=MOMENTUM)# weight_decay=WEIGHT_DECAY)
     for epoch in range(1, EPOCHS + 1):
-        train_model(model, train_loader, optimizer, epoch, LOG_INTERVAL)
-        test_model(model, test_loader)
+        train_true_model_single(model, train_loader, optimizer, epoch, LOG_INTERVAL)
+        test_true_model_single(model, test_loader)
 #    torch.save(model.state_dict(), '../models/ConvNet_E10')
 #    model = models.ConvNet()
 #    model.load_state_dict(torch.load('../models/ConvNet_E10'))
         
-def train_model(model, train_loader, optimizer, epoch, log_interval):
-    ''' Training step for number predictor model '''
+def train_dcell_model(model, train_loader, test_loader, 
+                      learning_rate=0.01, epochs=1, 
+                      betas=(0.9,0.99), eps=1e-05,
+                      log_interval=25):
+    ''' Train DCell model using ADAM, adapted from jisoo's code,
+        primarily code for train_dcell_model_single '''
+        
+    ''' Generate a loss function for every node '''
+    term_size_map = model.term_size_map
+    loss_map = {}
+    for term in term_size_map.keys():
+        loss_map[term] = nn.MSELoss() 
+        
+    ''' Mask edges between nodes and unrelated inputs as 0 '''
+    term_mask_map = create_dcell_term_mask(model)
+    for name, param in model.named_parameters():
+        term_name = int(name.split('_')[0]) # cast to int
+        if '_direct_input_layer.weight' in name:
+            param.data = torch.mul(param.data, term_mask_map[term_name]) * 0.1
+        else:
+            param.data = param.data * 0.1
+    
+    ''' Optimization loop with ADAM '''
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, betas=betas, eps=eps)
+    for epoch in range(1,epochs+1):
+        model, train_corr, train_acc = train_dcell_model_single(model, loss_map,
+            term_mask_map, train_loader, optimizer, epoch, log_interval)
+        test_corr, test_acc = test_dcell_model_single(model, test_loader)
+        
+        train_corr = round(train_corr, 4); train_acc = round(train_acc, 4)
+        test_corr = round(test_corr, 4); test_acc = round(test_acc, 4)
+        print('Epoch:', epoch)
+        print('\tTraining MCC:', train_corr, '\tTraining ACC:', train_acc)
+        print('\t Testing MCC:', test_corr, '\t Testing ACC:', test_acc)
+        
+    return model
+
+def test_dcell_model_single(model, test_loader):
+    ''' Testing step for DCell model, single epoch '''
+    model.eval()
+    predictions = torch.zeros(0, 0); truth = torch.zeros(0, 0)
+    for batch_idx, (data, target) in enumerate(test_loader):
+        target = target.float().view(-1,1)
+        aux_out_map,_ = model(data)
+        batch_predictions = (aux_out_map[model.root] > 0.5).float()
+        predictions = torch.cat([predictions, batch_predictions], 0)
+        truth = torch.cat([truth, target], 0)
+        
+    test_corr, test_acc = compute_mcc_and_accuracy(predictions, truth)
+    return test_corr, test_acc
+
+def train_dcell_model_single(model, loss_map, term_mask_map, train_loader, optimizer, epoch, log_interval=25):
+    ''' Training step for DCell model, single epoch '''
     model.train()
+    predictions = torch.zeros(0, 0); truth = torch.zeros(0, 0)
     for batch_idx, (data, target) in enumerate(train_loader):
-#        if args.CUDA:
-#            data, target = data.cuda(), target.cuda()
+        ''' Forward step: Get values at each node '''
+        target = target.float().view(-1,1) # cast to float for MSE loss
         optimizer.zero_grad()
-        output = model(data)
-        loss = F.nll_loss(output, target)
-        loss.backward()
+        aux_out_map, _ = model(data) # float values at each node
+        
+        ''' Backward step: Compute total loss, based on loss at the root 
+            output plus 0.2 times the loss at each node '''
+        total_loss = 0
+        for term, loss in loss_map.items():
+            term_outputs = aux_out_map[term]
+            term_loss = loss_map[term](term_outputs, target)
+            scale = 1.0 if term == model.root else 0.2
+            total_loss += scale * term_loss
+        total_loss.backward()
+        
+        ''' Mask edges between nodes and unrelated inputs as 0 '''
+        for name, param in model.named_parameters():
+            if '_direct_input_layer.weight' not in name:
+                continue
+            term_name = int(name.split('_')[0])
+            param.grad.data = torch.mul(param.grad.data, term_mask_map[term_name])
         optimizer.step()
+        
+        ''' Print progress to date '''
         if batch_idx % log_interval == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(data), len(train_loader.dataset),
-                100. * batch_idx / len(train_loader), loss.item()))
+                100. * batch_idx / len(train_loader), total_loss.item()))
+        
+        ''' Log predictions and truth values for MCC calculation '''
+        batch_predictions = (aux_out_map[model.root] > 0.5).float()
+        predictions = torch.cat([predictions, batch_predictions], 0)
+        truth = torch.cat([truth, target], 0)
+        
+    ''' Evalulate prediction performance with regards to the 
+        original binary prediction target '''
+    train_corr, train_acc = compute_mcc_and_accuracy(predictions, truth)
+    return model, train_corr, train_acc
 
-def test_model(model, test_loader):
-    ''' Testing step for number predictor model '''
+def compute_mcc_and_accuracy(predictions, truth, use_pseudocounts=True):
+    ''' Computes Matthews Correlation Coefficiency and overall accuracy '''
+    pred_np = predictions.view(-1).data.numpy().astype(np.int)
+    truth_np = truth.view(-1).data.numpy().astype(np.int)
+    if use_pseudocounts: # add 1 of each case to counts
+        pred_pseudo = np.array([0,0,1,1])
+        truth_pseudo = np.array([0,1,0,1])
+        pred_np = np.concatenate([pred_np, pred_pseudo])
+        truth_np = np.concatenate([truth_np, truth_pseudo])
+    num_correct = np.sum( np.logical_and(pred_np, truth_np) )
+    accuracy = num_correct / len(pred_np)
+    truth_np = (2 * (truth_np - 0.5)).astype(np.int) # from 0/1 to -1/+1
+    pred_np = (2 * (pred_np - 0.5)).astype(np.int) # from 0/1 to -1/+1
+    mcc = matthews_corrcoef(truth_np, pred_np)
+    return mcc, accuracy
+
+def create_dcell_term_mask(dcell_model):
+    ''' For DCell-like models:
+        Create mask to scale gradients based on whether or
+        not the a node is connected to an input directly, or
+        is connected through a child node. '''
+    term_mask_map = {}
+    for term, element_set in dcell_model.term_element_map.items():
+        mask = torch.zeros(len(element_set), dcell_model.feature_dim)
+        for i, term_id in enumerate(element_set):
+            mask[i, term_id] = 1
+        term_mask_map[term] = mask
+    return term_mask_map
+    
+def train_true_model(model, input_batch=64, test_batch=1000, 
+                     lr=0.05, momentum=0.5, epochs=20, log_interval=25):
+    ''' Generally training algorithm for training ConvNet to learn MNIST
+        labels, using SGD and NLL loss, adapted from pytorch tutorial. '''
+        
+    ''' Load MNIST datasets '''
+    train_loader = torch.utils.data.DataLoader(
+        datasets.MNIST('../data', train=True, download=True, 
+                       transform=transforms.Compose(transform_black_and_white())),
+        batch_size=input_batch, shuffle=True)
+    test_loader = torch.utils.data.DataLoader(
+        datasets.MNIST('../data', train=False, download=True, 
+                       transform=transforms.Compose(transform_black_and_white())),
+        batch_size=test_batch, shuffle=True)
+    
+    ''' Train/test for specified number of epochs'''
+    optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)# weight_decay=WEIGHT_DECAY)
+    for epoch in range(1, epochs + 1):
+        train_true_model_single(model, train_loader, optimizer, epoch, log_interval)
+        test_true_model_single(model, test_loader)
+    return model
+
+def test_true_model_single(model, test_loader):
+    ''' Testing step for number predictor model, single epoch '''
     model.eval()
     test_loss = 0
     correct = 0
     for data, target in test_loader:
-#        if CUDA.cuda:
-#            data, target = data.cuda(), target.cuda()
         output = model(data)
         test_loss += F.nll_loss(output, target, size_average=False).item() # sum up batch loss
         pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
@@ -89,6 +215,20 @@ def test_model(model, test_loader):
     print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
         test_loss, correct, len(test_loader.dataset),
         100. * correct / len(test_loader.dataset)))
+        
+def train_true_model_single(model, train_loader, optimizer, epoch, log_interval):
+    ''' Training step for number predictor model, single epoch '''
+    model.train()
+    for batch_idx, (data, target) in enumerate(train_loader):
+        optimizer.zero_grad()
+        output = model(data)
+        loss = F.nll_loss(output, target)
+        loss.backward()
+        optimizer.step()
+        if batch_idx % log_interval == 0:
+            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+                epoch, batch_idx * len(data), len(train_loader.dataset),
+                100. * batch_idx / len(train_loader), loss.item()))
 
 def transform_black_and_white():
     ''' Grayscale image to black and white. Used for all true models '''
@@ -100,7 +240,7 @@ def transform_default():
 
 def make_dcellnet_for_label(true_model, label=2, correlation_data_file=None,
                             p_threshold=0.05, min_cluster_size=10,
-                            plot_ontology=True):
+                            plot_ontology=True, min_neurons_per_term=15):
     ''' Creates a DCellNet for predicting whether or not an image has a 
         particular label. The intended usage is to be analogous to cell 
         viability predictions from genotype. For instance, taking each pixel 
@@ -145,13 +285,15 @@ def make_dcellnet_for_label(true_model, label=2, correlation_data_file=None,
         if len(directly_mapped_elements) > 0:
             term_element_map[term] = set(directly_mapped_elements)
         
-    return DCellNet(term_size_map, term_element_map, dG, num_elements, root)
+    return DCellNet(term_size_map, term_element_map, dG, num_elements, 
+                    root, min_neurons_per_term)
 
 
 class DCellNet(nn.Module):
     ''' Adapted from jisoo's DCell code, via majianzhu '''
 
-    def __init__(self, term_size_map, term_element_map, dG, num_elements, root):
+    def __init__(self, term_size_map, term_element_map, dG, num_elements, 
+                 root, min_neurons_per_term=15):
         ''' Takes ngene inputs as a 1D tensor, returns a single output.
             NOTE: The model will be different based on whether or not elements
             are mapped only once, or if they are mapped to a term as well as
@@ -170,14 +312,15 @@ class DCellNet(nn.Module):
         self.term_dim_map = {} # number of neurons assigned to each term
         self.term_layer_list = [] # list of layers (one per hierarchy depth, computation order)
         self.term_child_map = {} # term to child terms, renamed from term_neighbor_map
-        self.calculate_term_dim(term_size_map)  
+        self.term_size_map = term_size_map
+        self.calculate_term_dim(term_size_map, min_neurons_per_term)  
         self.construct_direct_input_layers()
         self.construct_NN_graph(dG)
 
-    def calculate_term_dim(self, term_size_map): # renamed from cal_term_dim
+    def calculate_term_dim(self, term_size_map, min_neurons_per_term): # renamed from cal_term_dim
         ''' Initializes number of neurons per ontology term, based on term size '''
         for term, term_size in term_size_map.items():
-            self.term_dim_map[term] = max( 15, int( 0.3 * term_size))
+            self.term_dim_map[term] = max(min_neurons_per_term, int( 0.3 * term_size))
 
     def construct_direct_input_layers(self): # renamed from contruct_direct_gene_layer
         ''' Constructs linear input layers for all terms. Reduces full input
@@ -241,9 +384,8 @@ class DCellNet(nn.Module):
                 aux_layer1_out = F.tanh(self._modules[str(term)+'_aux_linear_layer1'](term_NN_out_map[term]))
                 aux_out_map[term] = self._modules[str(term)+'_aux_linear_layer2'](aux_layer1_out)
 
-#        return aux_out_map, term_NN_out_map
-        return term_NN_out_map[self.root] # output at the root node
-    
+        return aux_out_map, term_NN_out_map
+#        return term_NN_out_map[self.root] # output at the root node
     
 ''' True models for original MNIST problem of predicting image labels '''
     
@@ -273,61 +415,6 @@ class ConvNet(nn.Module):
         self.fc2 = nn.Linear(50, 10)
 
     def forward(self, x):
-        x = F.relu(F.max_pool2d(self.conv1(x), 2))
-        x = F.relu(F.max_pool2d(self.conv2_drop(self.conv2(x)), 2))
-        x = x.view(-1, 320)
-        x = F.relu(self.fc1(x))
-        x = F.dropout(x, training=self.training)
-        x = self.fc2(x)
-        return F.log_softmax(x, dim=1)
-
-class StnNet(nn.Module):
-    ''' Tutorial Spatial Transformer network, from:
-        http://pytorch.org/tutorials/intermediate/
-        spatial_transformer_tutorial.html?highlight=mnist '''
-    def __init__(self):
-        super(StnNet, self).__init__()
-        self.conv1 = nn.Conv2d(1, 10, kernel_size=5)
-        self.conv2 = nn.Conv2d(10, 20, kernel_size=5)
-        self.conv2_drop = nn.Dropout2d()
-        self.fc1 = nn.Linear(320, 50)
-        self.fc2 = nn.Linear(50, 10)
-
-        # Spatial transformer localization-network
-        self.localization = nn.Sequential(
-            nn.Conv2d(1, 8, kernel_size=7),
-            nn.MaxPool2d(2, stride=2),
-            nn.ReLU(True),
-            nn.Conv2d(8, 10, kernel_size=5),
-            nn.MaxPool2d(2, stride=2),
-            nn.ReLU(True)
-        )
-
-        # Regressor for the 3 * 2 affine matrix
-        self.fc_loc = nn.Sequential(
-            nn.Linear(10 * 3 * 3, 32),
-            nn.ReLU(True),
-            nn.Linear(32, 3 * 2)
-        )
-
-        # Initialize the weights/bias with identity transformation
-        self.fc_loc[2].weight.data.fill_(0)
-        self.fc_loc[2].bias.data = torch.FloatTensor([1, 0, 0, 0, 1, 0])
-
-    # Spatial transformer network forward function
-    def stn(self, x):
-        xs = self.localization(x)
-        xs = xs.view(-1, 10 * 3 * 3)
-        theta = self.fc_loc(xs)
-        theta = theta.view(-1, 2, 3)
-        grid = F.affine_grid(theta, x.size())
-        x = F.grid_sample(x, grid)
-        return x
-
-    def forward(self, x):
-        # transform the input
-        x = self.stn(x)
-        # Perform the usual forward pass
         x = F.relu(F.max_pool2d(self.conv1(x), 2))
         x = F.relu(F.max_pool2d(self.conv2_drop(self.conv2(x)), 2))
         x = x.view(-1, 320)

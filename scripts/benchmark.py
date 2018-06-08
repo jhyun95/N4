@@ -8,11 +8,9 @@ Created on Fri May 25 11:58:27 2018
 
 import os, sys, datetime
 import torch
-import torch.optim as optim
-from torchvision import datasets, transforms
 
-from models import transform_black_and_white, ConvNet, \
-    train_model, test_model, make_dcellnet_for_label
+from models import ConvNet, make_dcellnet_for_label, \
+    train_true_model, train_dcell_model, test_dcell_model_single
 from interactions import find_pixel_correlations, __get_prediction__
 from data_generator import generate_dcell_train_data, generate_dcell_eval_data
 
@@ -41,34 +39,30 @@ def main():
     ''' Initialize working directory and log '''
     if not os.path.isdir(WORKING_DIR):
         os.mkdir(WORKING_DIR)
-    log_file = WORKING_DIR + 'log.txt'
+    log_file = WORKING_DIR + 'log_min1.txt'
     
     ''' Print to console and log file '''
     with LoggingPrinter(log_file):
         print('------ BEGIN LOG:', datetime.datetime.now(), '-----------------------------------')
-        true_model = fit_true_model()
-        test_interactions(true_model) # only need to run this once per true model
-        benchmark_dcell(true_model, WT_TEST, WT_TEST_LABEL, model_name='DCell_test')
+        true_model = fit_true_model(model_name='ConvNet_E20', epochs=20)
+#        test_interactions(true_model) # only need to run this once per true model
+#        benchmark_dcell(true_model, WT_TEST, WT_TEST_LABEL, model_name='DCell_test')
         benchmark_dcell(true_model, WT_A, WT_A_LABEL, model_name='DCell_A')
         benchmark_dcell(true_model, WT_B, WT_B_LABEL, model_name='DCell_B')
         benchmark_dcell(true_model, WT_C, WT_C_LABEL, model_name='DCell_C')
         benchmark_dcell(true_model, WT_D, WT_D_LABEL, model_name='DCell_D')
         benchmark_dcell(true_model, WT_E, WT_E_LABEL, model_name='DCell_E')
         
-def fit_true_model():
-    ''' Fit the true model '''
-    TRUE_MODEL_NAME = 'ConvNet_E20'
-    TRUE_MODEL_EPOCHS = 20
-       
+def fit_true_model(model_name, epochs):
     ''' Load or train the "true" image model '''
-    model_path = WORKING_DIR + TRUE_MODEL_NAME
+    model_path = WORKING_DIR + model_name
     true_model = ConvNet()
     if os.path.isfile(model_path):
         print('Loading true image model...')
         true_model.load_state_dict(torch.load(model_path))
     else:
         print('Training true image model...')
-        true_model = train_true_model(true_model, epochs=TRUE_MODEL_EPOCHS)
+        true_model = train_true_model(true_model, epochs=epochs)
         torch.save(true_model.state_dict(), model_path)
     true_model.eval()
     return true_model
@@ -86,14 +80,16 @@ def test_interactions(true_model):
 def benchmark_dcell(true_model, wt_image_hex, wt_label, model_name='DCell_E1'):
     ''' Benchmark DCell against a true model and a selected wildtype image '''
     CORRELATION_MODE = 'mcc-adj'
-    DCELL_MODEL_EPOCHS = 1
-    TEST_DATA_SEED = 1
-    CLUSTER_THRESHOLD = 0.05
-    MIN_CLUSTER_SIZE = 10
-    TRAINING_DOUBLE_COUNT = 50000
-    VALIDATION_DOUBLE_COUNT = 20000
-    EVALULATION_COUNT = 50000
-    MAX_EVAL_KNOCKOUT = 15
+    DCELL_MODEL_EPOCHS = 2 # number of epochs to train the DCell model
+    TEST_DATA_SEED = 1 # randomization seed for generating synthetic data
+    CLUSTER_THRESHOLD = 0.05 # p-value cutoff of hierarchical clustering
+    MIN_CLUSTER_SIZE = 10 # minimum cluster size for hierarchical clustering
+    TRAINING_DOUBLE_COUNT = 100000 # number of double KOs to train DCell with
+    VALIDATION_DOUBLE_COUNT = 20000 # not that important, quick check for robustness
+    MAX_EVAL_KNOCKOUT = 15 # evaluate up to KOs of this size
+    EVALULATION_COUNT = 100000 # number of higher order KOs to test per size
+    MIN_NEURONS_PER_TERM = 5 # default is 15
+    PLOT_ONTOLOGY = False # plot the DCell ontology
        
     print('Base Image:', wt_image_hex)
     print('Base Image Label:', wt_label)
@@ -121,7 +117,8 @@ def benchmark_dcell(true_model, wt_image_hex, wt_label, model_name='DCell_E1'):
                             correlation_data_file=corr_path,
                             p_threshold=CLUSTER_THRESHOLD, 
                             min_cluster_size=MIN_CLUSTER_SIZE,
-                            plot_ontology=True)
+                            plot_ontology=PLOT_ONTOLOGY, 
+                            min_neurons_per_term=MIN_NEURONS_PER_TERM)
     
     ''' Load or train DCell-like model on synthetic data'''
     dcell_path = WORKING_DIR + model_name
@@ -138,42 +135,19 @@ def benchmark_dcell(true_model, wt_image_hex, wt_label, model_name='DCell_E1'):
         print('Training DCell model on synthetic data...')
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE)
         test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=TEST_BATCH_SIZE)
-        dcell_model = train_epochs(dcell_model, train_loader, test_loader, epochs=DCELL_MODEL_EPOCHS)
+        dcell_model = train_dcell_model(dcell_model, train_loader, test_loader, epochs=DCELL_MODEL_EPOCHS)
         torch.save(dcell_model.state_dict(), dcell_path)
     dcell_model.eval()
     
     ''' Evaluate DCell-like model on higher order knockouts '''
     for i in range(2,MAX_EVAL_KNOCKOUT+1):
-        print('Testing', str(i)+'-knockouts...')
+        print(model_name + ': Testing', str(i)+'-knockouts...')
         eval_dataset, eval_labels = generate_dcell_eval_data(wt_image_hex, 
             true_model, order=i, count=EVALULATION_COUNT, seed=TEST_DATA_SEED)
         eval_loader = torch.utils.data.DataLoader(eval_dataset, batch_size=TEST_BATCH_SIZE)
-        test_model(dcell_model, eval_loader)
-    
-def train_true_model(model, input_batch=TRAIN_BATCH_SIZE, test_batch=TEST_BATCH_SIZE, 
-                     lr=LEARNING_RATE, momentum=MOMENTUM, epochs=10, print_interval=25):
-    ''' Load MNIST datasets '''
-    train_loader = torch.utils.data.DataLoader(
-        datasets.MNIST('../data', train=True, download=True, 
-                       transform=transforms.Compose(transform_black_and_white())),
-        batch_size=input_batch, shuffle=True)
-    test_loader = torch.utils.data.DataLoader(
-        datasets.MNIST('../data', train=False, download=True, 
-                       transform=transforms.Compose(transform_black_and_white())),
-        batch_size=test_batch, shuffle=True)
-    
-    ''' Train/test for specified number of epochs'''
-    model = train_epochs(model, train_loader, test_loader, lr, momentum, epochs, print_interval)
-    return model
-
-def train_epochs(model, train_loader, test_loader, lr=LEARNING_RATE,
-                 momentum=MOMENTUM, epochs=10, print_interval=25):
-    ''' Train a torch model using SGD '''
-    optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)# weight_decay=WEIGHT_DECAY)
-    for epoch in range(1, epochs + 1):
-        train_model(model, train_loader, optimizer, epoch, print_interval)
-        test_model(model, test_loader)
-    return model
+        eval_corr, eval_acc = test_dcell_model_single(dcell_model, eval_loader)
+        print('MCC:', eval_corr)
+        print('ACC:', eval_acc)
 
 class LoggingPrinter:
     ''' Used to simultaneously print to file and console '''
