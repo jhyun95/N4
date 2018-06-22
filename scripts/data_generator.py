@@ -22,29 +22,6 @@ def generate_dcell_eval_data(base, true_model, order, count=100000, seed=1):
     dataset, labels = convert_knockouts_to_tensor_dataset(base, true_model, knockouts)
     return dataset, labels
 
-def generate_dcell_interacting_eval_data(base, true_model, order, test_count=100000, seed=1):
-    ''' Same as dcell_eval_data, but after generating knockouts, returns only
-        those that demonstrate interactions of the order specified. For 
-        instance, if order=5, only returns cases in which all '''
-    pass
-
-def test_interaction(base, true_model, knockout):
-    ''' Test if a given knockout has a full interaction (i.e. for a 5-KO,
-        if there is fifth order interaction). This is defined as:
-        - If at least one subset KO is lethal but the full KO is nonlethal,
-          then there is a full positive interaction 
-        - If all subset KOs are nonlethal but the full KO is lethal,
-          then there is a full negative interaction '''
-    order = len(knockout)
-    _, true_label = convert_knockout_to_tensor(base, true_model, [])
-    has_one_lethal = False # at least one subset KO is lethal
-    is_all_nonlethal = True # all subset KOs nonlethal
-    for ko_size in range(1, order):
-        for sub_knockout in itertools.combinations(knockout, ko_size):
-            _, target = convert_knockout_to_tensor(base, true_model, sub_knockout)
-            # TODO:
-#            lethal = 
-
 def generate_dcell_train_data(base, true_model, double_train_count=100000, 
                               double_test_count=20000, seed=1):
     ''' Generates training and testing/validation data for DCell testing model 

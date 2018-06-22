@@ -173,6 +173,7 @@ def find_2nd_order_interactions(model, first_order_file=OUTPUT_1ST,
             already_run.add(hexstring)
         f.close()
     
+    model.eval()
     image_counter = 1
     total_pairs = DIM*DIM*(DIM*DIM-1)*0.5
     for hexstring in consistent_images:

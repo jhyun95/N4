@@ -22,8 +22,6 @@ LEARNING_RATE = 0.05
 MOMENTUM = 0.5
 
 ''' Images most like real cell viability model '''
-WT_TEST = '0x1e000003e000007e000007e000007c000003c000000f8000000f0000003c000000600000038000001c000000e00000070001f8380007ff80001ff8000000000000000000000000000000000000000000'
-WT_TEST_LABEL = 5 # Image should be 5, ~14k positive interactions, ~140k negative interactions
 WT_A = '0x3000000f800000fc000007c000003c000003c000003c000007c000007c00000f800000f800000f800000f800000f000000f000001e000001e000001e000001c0000018000000000000000000000000'
 WT_B = '0x30000003800001b8000039c000071c0000f1c0001f9c0001ffc000003c000001c000001c000001c000000e000000c000000e000000e000000e000000e000000e00000020000000000000000'
 WT_C = '0x1ac00003fe00003fe00007f8000077c00007fe00007ff0000f8f000040780000038000003c000001c0000018000c038000e0f0000f3f0000ffe00007fc00007f000003c000000000000000000000000'
@@ -39,7 +37,7 @@ def main():
     ''' Initialize working directory and log '''
     if not os.path.isdir(WORKING_DIR):
         os.mkdir(WORKING_DIR)
-    log_file = WORKING_DIR + 'log_min20_epochs100_extended.txt'
+    log_file = WORKING_DIR + 'log_min3_epochs100_extended.txt'
     
     ''' Print to console and log file '''
     with LoggingPrinter(log_file):
@@ -88,7 +86,7 @@ def benchmark_dcell(true_model, wt_image_hex, wt_label, model_name='DCell_E1'):
     VALIDATION_DOUBLE_COUNT = 20000 # not that important, quick check for robustness
     MAX_EVAL_KNOCKOUT = 15 # evaluate up to KOs of this size
     EVALULATION_COUNT = 50000 # number of higher order KOs to test per size
-    MIN_NEURONS_PER_TERM = 20 # default is 20 in the paper
+    MIN_NEURONS_PER_TERM = 20 # default is 20 in the paper, hard minimum is 0.3 * MIN_CLUSTER_SIZE
     PLOT_ONTOLOGY = False # plot the DCell ontology
        
     print('Base Image:', wt_image_hex)
