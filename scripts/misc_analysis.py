@@ -14,11 +14,50 @@ EPOCHS_IN_LOG = 100
 
 def main():
 #    plot_pairwise_interaction()
-#    parse_log(log_file='/mnt/346490BF64908570/log_min20_epochs5.txt',
-#              out_fit_file='../fitting.csv')
-    parse_log()
+    parse_perf_log(log_file='../data/DCell_test/log_min20_epochs100_fc_extended.txt')
     plot_training_performance()
     plot_evaluation_performance()
+#    plot_lethal_ko_percents()
+    
+def plot_lethal_ko_percents(lethal_count_file='../data/DCell_test/log_lethal_200.txt',
+                            lethal_count_file2='../data/DCell_test/log_lethal_201-500.txt'):
+    ''' Plots the percent of KOs being lethal vs. KO size '''
+    KO_START = 2; KO_LIMIT = 200; KO_LIMIT2 = 500
+    SINGLE_KO = np.array([35, 73, 51, 36, 53]) / 784 * 100 # single KO lethal cases
+        
+    ''' Extract from first file '''
+    lethal_rates = np.zeros((len(MODELS), KO_LIMIT2+1))
+    count = KO_START; model = 0
+    for line in open(lethal_count_file, 'r+'):
+        if '>' == line[0]:
+            lethal_rate = line.split()[-1]
+            lethal_rate = float(lethal_rate[1:-2])
+            lethal_rates[model, count] = lethal_rate
+            count += 1
+            if count > KO_LIMIT:
+                count = KO_START; model += 1
+    
+    ''' Extract from second file '''     
+    count = KO_LIMIT + 1; model = 0
+    for line in open(lethal_count_file2, 'r+'):
+        if '>' == line[0]:
+            lethal_rate = line.split()[-1]
+            lethal_rate = float(lethal_rate[1:-2])
+            lethal_rates[model, count] = lethal_rate
+            count += 1
+            if count > KO_LIMIT2:
+                count = KO_LIMIT + 1; model += 1
+                
+    lethal_rates[:,1] = SINGLE_KO
+    ko_counts = np.arange(0,KO_LIMIT2+1)
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(6.5,4))
+    for i in range(len(MODELS)):
+        ax.plot(ko_counts, lethal_rates[i,:], label=MODELS[i].replace('DCell','ConvNet'))
+    ax.set_title('% Lethal vs KO size')
+    ax.legend()
+    ax.set_ylabel('% Lethal')
+    ax.set_xlabel('KO size')
+    plt.tight_layout()
     
 def plot_evaluation_performance(eval_file='../data/DCell_test/evaluation.csv'):
     ''' Plots the MCC and ACC during evaluation against different sized KOs '''
@@ -62,7 +101,7 @@ def plot_training_performance(perf_file='../data/DCell_test/fitting.csv'):
     axs[1].set_xlabel('Epoch')
     plt.tight_layout()
     
-def parse_log(log_file='../data/DCell_test/log_min20_epochs100_extended.txt',
+def parse_perf_log(log_file='../data/DCell_test/log_min20_epochs100_extended.txt',
               out_eval_file='../data/DCell_test/evaluation.csv',
               out_fit_file='../data/DCell_test/fitting.csv'):
     ''' Extract ACC and MCC curves for each model '''

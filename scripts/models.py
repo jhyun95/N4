@@ -54,9 +54,9 @@ def main():
 #    model = models.ConvNet()
 #    model.load_state_dict(torch.load('../models/ConvNet_E10'))
         
-def train_dcell_model(model, train_loader, test_loader, train_frac_pos,
-                      learning_rate=0.001, epochs=1, betas=(0.9,0.99), 
-                      eps=1e-5, log_interval=5):
+def train_dcell_model(model, train_loader, test_loader, train_frac_pos, 
+                      use_fc=False, learning_rate=0.001, epochs=1, 
+                      betas=(0.9,0.99), eps=1e-5, log_interval=5):
     ''' Train DCell model using ADAM, adapted from jisoo's code,
         primarily code for train_dcell_model_single '''
         
@@ -67,7 +67,7 @@ def train_dcell_model(model, train_loader, test_loader, train_frac_pos,
         loss_map[term] = nn.MSELoss() 
         
     ''' Mask edges between nodes and unrelated inputs as 0 '''
-    term_mask_map = create_dcell_term_mask(model)
+    term_mask_map = create_dcell_term_mask(model, use_fc)
     for name, param in model.named_parameters():
         term_name = int(name.split('_')[0]) # cast to int
         if '_direct_input_layer.weight' in name:
@@ -183,7 +183,7 @@ def compute_performance(predictions, truth, use_pseudocounts=True):
     mcc = matthews_corrcoef(truth_np, pred_np)
     return mcc, accuracy, [TPs, FPs, FNs, TNs]
 
-def create_dcell_term_mask(dcell_model):
+def create_dcell_term_mask(dcell_model, use_fc=False):
     ''' For DCell-like models:
         Create mask to scale gradients based on whether or
         not the a node is connected to an input directly, or
@@ -194,6 +194,8 @@ def create_dcell_term_mask(dcell_model):
         for i, term_id in enumerate(element_set):
             mask[i, term_id] = 1
         term_mask_map[term] = mask
+    if use_fc: # testing a fully-connected DCell
+        mask = 1
     return term_mask_map
     
 def train_true_model(model, input_batch=64, test_batch=1000, 

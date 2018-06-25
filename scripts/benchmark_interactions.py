@@ -20,19 +20,19 @@ LABELS = ['WT_A', 'WT_B', 'WT_C', 'WT_D', 'WT_E']
 def main():
     FULL_KO_ONLY = True
     
-    with LoggingPrinter('../data/DCell_test/log_lethal_50.txt'):
+    with LoggingPrinter('../data/DCell_test/log_lethal_201-500.txt'):
         print('------ BEGIN LOG:', datetime.datetime.now(), '-----------------------------------')
         true_model = ConvNet()
         true_model.load_state_dict(torch.load('../data/DCell_test/ConvNet_E20'))
         true_model.eval()
         
         if FULL_KO_ONLY: # testing for lethality only
-            MAX_ORDER = 50
+            MAX_ORDER = 500; START_ORDER = 201
             for wti in range(len(WILDTYPES)):
                 wildtype = WILDTYPES[wti]
                 label = LABELS[wti]
                 print('Testing', label)
-                for i in range(2,1+MAX_ORDER):
+                for i in range(START_ORDER,1+MAX_ORDER):
                     start_time = time.time()
                     test_interactions(wildtype, true_model, order=i, count=50000, 
                                       starting_size=i, batch_size=1024)

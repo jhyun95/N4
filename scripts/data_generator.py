@@ -9,6 +9,7 @@ import itertools
 import numpy as np
 import torch
 from torch.utils.data import TensorDataset
+from sklearn.utils.random import sample_without_replacement
 
 from interactions import DIM, __get_pixel__, __apply_corruptions__, \
     __hex_to_image__, __get_prediction__
@@ -114,11 +115,12 @@ def generate_random_pixel_groups(size, count, seed=1):
         for i in range(count):
             output.append(tuple(double_ko_pairs[i,:]))
         return output
-    elif size > 2: # for larger groups, generate repeatedly new random groups
+    elif size > 2: # for larger groups, generate repeatedly new random groupst()        
         choices = set()
+        indices = range(DIM*DIM)
         while len(choices) < count:
-            group = tuple(np.random.randint(0,DIM*DIM,size=size))
-            if len(group) == len(set(group)): # pixels are unique
-                choices.add(group)
+#            group = tuple(np.random.choice(indices, size, replace=False))
+            group = tuple(sample_without_replacement(DIM*DIM, size).tolist())
+            choices.add(group)
         return list(choices)
     return []

@@ -37,7 +37,7 @@ def main():
     ''' Initialize working directory and log '''
     if not os.path.isdir(WORKING_DIR):
         os.mkdir(WORKING_DIR)
-    log_file = WORKING_DIR + 'log_min3_epochs100_extended.txt'
+    log_file = WORKING_DIR + 'log_min20_epochs100_fc_extended.txt'
     
     ''' Print to console and log file '''
     with LoggingPrinter(log_file):
@@ -45,11 +45,11 @@ def main():
         true_model = fit_true_model(model_name='ConvNet_E20', epochs=20)
 #        test_interactions(true_model) # only need to run this once per true model
 #        benchmark_dcell(true_model, WT_TEST, WT_TEST_LABEL, model_name='DCell_test')
-        benchmark_dcell(true_model, WT_A, WT_A_LABEL, model_name='DCell_A')
-        benchmark_dcell(true_model, WT_B, WT_B_LABEL, model_name='DCell_B')
-        benchmark_dcell(true_model, WT_C, WT_C_LABEL, model_name='DCell_C')
-        benchmark_dcell(true_model, WT_D, WT_D_LABEL, model_name='DCell_D')
-        benchmark_dcell(true_model, WT_E, WT_E_LABEL, model_name='DCell_E')
+        benchmark_dcell(true_model, WT_A, WT_A_LABEL, model_name='FC_DCell_A')
+        benchmark_dcell(true_model, WT_B, WT_B_LABEL, model_name='FC_DCell_B')
+        benchmark_dcell(true_model, WT_C, WT_C_LABEL, model_name='FC_DCell_C')
+        benchmark_dcell(true_model, WT_D, WT_D_LABEL, model_name='FC_DCell_D')
+        benchmark_dcell(true_model, WT_E, WT_E_LABEL, model_name='FC_DCell_E')
         
 def fit_true_model(model_name, epochs):
     ''' Load or train the "true" image model '''
@@ -88,6 +88,7 @@ def benchmark_dcell(true_model, wt_image_hex, wt_label, model_name='DCell_E1'):
     EVALULATION_COUNT = 50000 # number of higher order KOs to test per size
     MIN_NEURONS_PER_TERM = 20 # default is 20 in the paper, hard minimum is 0.3 * MIN_CLUSTER_SIZE
     PLOT_ONTOLOGY = False # plot the DCell ontology
+    USE_FC = True # test fully-connected DCell (no hierarchy)
        
     print('Base Image:', wt_image_hex)
     print('Base Image Label:', wt_label)
@@ -136,7 +137,7 @@ def benchmark_dcell(true_model, wt_image_hex, wt_label, model_name='DCell_E1'):
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True)
         test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=TEST_BATCH_SIZE, shuffle=True)
         dcell_model = train_dcell_model(dcell_model, train_loader, test_loader, 
-                            train_frac_pos, epochs=DCELL_MODEL_EPOCHS)
+                            train_frac_pos, use_fc=USE_FC, epochs=DCELL_MODEL_EPOCHS)
         torch.save(dcell_model.state_dict(), dcell_path)
     dcell_model.eval()
     

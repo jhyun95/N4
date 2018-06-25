@@ -11,6 +11,7 @@ from torchvision import datasets, transforms
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
+import pandas as pd
 import random, time, os, multiprocessing
 
 from models import transform_black_and_white, ConvNet
@@ -25,8 +26,8 @@ CORR_DIR = '../data/pixel_correlations/'
 def main():
     ''' Examines 1st order and 2nd order interactions, and also computes
         pixel correlations when taking ConvNet as the true model. '''
-    model = ConvNet()
-    model.load_state_dict(torch.load("../models/ConvNet_E10"))
+#    model = ConvNet()
+#    model.load_state_dict(torch.load("../models/ConvNet_E10"))
     
     ''' Old exploratory functions '''
 #    third_order_test(model)
@@ -34,14 +35,50 @@ def main():
 #    find_2nd_order_interactions(model)
 
     ''' Pixel Correlation Calculation '''
-    
 #    find_pixel_correlations_parallel(model, sets=range(10), mode='sokal-michener', cpus=2)
 #    find_pixel_correlations_parallel(model, sets=range(10), mode='mcc', cpus=2)
 #    find_pixel_correlations_parallel(model, sets=range(10), mode='mcc-adj', cpus=2)
-    
 #    heatmap_correlation(CORR_DIR + 'pixel_sokal_michener_0s.csv.gz'); plt.figure()
 #    heatmap_correlation(CORR_DIR + 'pixel_mcc_0s.csv.gz'); plt.figure()
 #    heatmap_correlation(CORR_DIR + 'pixel_mcc_adj_0s.csv.gz')
+    
+    ''' Image exporting '''
+    create_images_with_essential()
+
+def create_images_with_essential(first_order='../data/DCell_test/1st_order.tsv',
+                                 out_folder='../data/DCell_test/images'):
+    ''' Render all images with essential pixels that the model predicts
+        correctly '''
+    df = pd.read_csv(first_order, sep='\t')
+    for i in range(df.shape[0]):
+        actual = df.loc[i,'actual']
+        base_prediction = df.loc[i,'base_prediction']
+        if actual == base_prediction:
+            hexstring = df.loc[i,'image_hex_string']
+            essential = df.loc[i,'corrupting_pixels'].split(';')
+            essential = map(lambda x: tuple(map(int,x[1:-1].split(','))), essential)
+            image = create_image(hexstring, list(essential))
+            output_name = out_folder + '/' + str(i) + '_' + str(actual) + '.png'
+            image.save(output_name)
+    
+def create_image(imagehex, marked_pixels=[]):
+    ''' Convert black-and-white image hexstring to an actual image. 
+        Optionally mark pixels in the image as red in a 2nd image '''
+    image_transform = transforms.ToPILImage()
+    image_tensor = __hex_to_image__(imagehex).view(DIM,DIM).data.numpy()
+    image_rgb = np.zeros((3,DIM,DIM), dtype=float)
+    for i in range(3): # black-white byte array -> RGB int array
+        image_rgb[i] = image_tensor
+        
+    if len(marked_pixels) > 0:
+        marked_image_rgb = np.copy(image_rgb)
+        for x,y in marked_pixels:
+            marked_image_rgb[:,x,y] = (0,1,0)
+        merged_image_rgb = np.concatenate((image_rgb,marked_image_rgb), axis=1)
+        image = image_transform(torch.FloatTensor(merged_image_rgb))
+    else:
+        image = image_transform(torch.FloatTensor(image_rgb))
+    return image
     
 def heatmap_correlation(correlation_data_file):
     ''' Heatmap of pixel correlation data '''
