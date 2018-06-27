@@ -5,7 +5,6 @@ Created on Mon May 28 00:40:08 2018
 @author: jhyun_000
 """
 
-import itertools
 import numpy as np
 import torch
 from torch.utils.data import TensorDataset

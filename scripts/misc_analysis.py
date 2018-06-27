@@ -21,10 +21,9 @@ def main():
 #    plot_training_performance(df_fit)
     
     ''' Plot DCell vs Fully connected (evaluation only) '''
-    
-#    df_eval_fc, df_fit_fc = parse_perf_log(log_file='../data/logs/log_min20_epochs100_fc_extended.txt')
-#    print(df_eval.head())
-#    plot_evaluation_performance(df_eval)
+    df_eval, df_fit = parse_perf_log(log_file='../data/logs/log_min20_epochs100_extended.txt')
+    df_eval_fc, df_fit_fc = parse_perf_log(log_file='../data/logs/log_min20_epochs100_fc_extended.txt')
+    plot_evaluation_performance_comparison(df_eval, df_eval_fc)
     
     ''' Plot % lethal vs KO size '''
 #    plot_lethal_ko_percents(limit=None)
@@ -109,11 +108,25 @@ def plot_lethal_ko_percents(lethal_count_file='../data/logs/log_lethal_200.txt',
     ax.set_xlabel('KO size')
     plt.tight_layout()
     
-def plot_evaluation_performance_comparison(df_eval, df_eval_fc):
+def plot_evaluation_performance_comparison(df_eval, df_eval_fc, start_ko=2, end_ko=15):
     ''' Plots the MCC uring evaluation against different sized KOs 
         for DCell-like models vs fully connected DCell models '''
-    df = df_eval
-
+    fig, axs = plt.subplots(nrows=1, ncols=2, sharey=True, figsize=(6.5,3))
+    KO_counts = range(start_ko, end_ko+1)
+    for m in range(len(MODELS)):
+        label = MODELS[m]
+        row_ind = len(KO_counts) * m
+        mcc_dc = df_eval.loc[row_ind:row_ind+len(KO_counts)-1, 'MCC']
+        mcc_fc = df_eval_fc.loc[row_ind:row_ind+len(KO_counts)-1, 'ACC']
+        axs[0].plot(KO_counts, mcc_dc, label=label)
+        axs[1].plot(KO_counts, mcc_fc, label=label)
+    axs[0].set_title('DCell: MCC vs KO size')
+    axs[1].set_title('Fully Connected: MCC vs KO size')
+    axs[0].set_ylabel('MCC'); axs[1].legend()
+    axs[0].set_xlabel('KO size'); axs[1].set_xlabel('KO size')
+    axs[0].set_xticks(np.arange(start_ko, end_ko+1, 2))
+    axs[1].set_xticks(np.arange(start_ko, end_ko+1, 2))
+    plt.tight_layout()
     
 def plot_evaluation_performance(df_eval, start_ko=2, end_ko=15):
     ''' Plots the MCC and ACC during evaluation against different sized KOs '''
@@ -122,7 +135,7 @@ def plot_evaluation_performance(df_eval, start_ko=2, end_ko=15):
     KO_counts = range(start_ko, end_ko+1)
     fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(6.5,3))
     for m in range(len(MODELS)):
-        mcc = []; acc = []; label = MODELS[m]
+        label = MODELS[m]
         row_ind = len(KO_counts) * m
         mcc = df.loc[row_ind:row_ind+len(KO_counts)-1, 'MCC']
         acc = df.loc[row_ind:row_ind+len(KO_counts)-1, 'ACC']
