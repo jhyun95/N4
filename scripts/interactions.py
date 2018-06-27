@@ -46,20 +46,29 @@ def main():
     create_images_with_essential()
 
 def create_images_with_essential(first_order='../data/DCell_test/1st_order.tsv',
-                                 out_folder='../data/DCell_test/images'):
+                                 out_folder='../data/DCell_test/images',
+                                 plot_distribution=True):
     ''' Render all images with essential pixels that the model predicts
         correctly '''
     df = pd.read_csv(first_order, sep='\t')
+    essential_count = []
     for i in range(df.shape[0]):
         actual = df.loc[i,'actual']
         base_prediction = df.loc[i,'base_prediction']
         if actual == base_prediction:
             hexstring = df.loc[i,'image_hex_string']
             essential = df.loc[i,'corrupting_pixels'].split(';')
-            essential = map(lambda x: tuple(map(int,x[1:-1].split(','))), essential)
-            image = create_image(hexstring, list(essential))
+            essential = list(map(lambda x: tuple(map(int,x[1:-1].split(','))), essential))
+            essential_count.append(len(essential))
+            image = create_image(hexstring, essential)
             output_name = out_folder + '/' + str(i) + '_' + str(actual) + '.png'
             image.save(output_name)
+    if plot_distribution:
+        plt.hist(essential_count, bins=range(0,400,25))
+        plt.title('Number of Essential Pixels')
+        plt.xlabel('# Essential Pixels')
+        plt.ylabel('# Images')
+        print(max(essential_count))
     
 def create_image(imagehex, marked_pixels=[]):
     ''' Convert black-and-white image hexstring to an actual image. 

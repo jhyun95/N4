@@ -10,18 +10,66 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 MODELS = ['DCell_A', 'DCell_B', 'DCell_C', 'DCell_D', 'DCell_E']
-EPOCHS_IN_LOG = 100
 
 def main():
+    ''' Plot % positive vs % negative pairwise interactions in all images with essential px '''
 #    plot_pairwise_interaction()
-    parse_perf_log(log_file='../data/DCell_test/log_min20_epochs100_fc_extended.txt')
-    plot_training_performance()
-    plot_evaluation_performance()
-#    plot_lethal_ko_percents()
     
-def plot_lethal_ko_percents(lethal_count_file='../data/DCell_test/log_lethal_200.txt',
-                            lethal_count_file2='../data/DCell_test/log_lethal_201-500.txt'):
-    ''' Plots the percent of KOs being lethal vs. KO size '''
+    ''' Plot DCell performance plots (training and evaluation) '''
+#    df_eval, df_fit = parse_perf_log(log_file='../data/logs/log_min20_epochs100_extended.txt')
+#    plot_evaluation_performance(df_eval)
+#    plot_training_performance(df_fit)
+    
+    ''' Plot DCell vs Fully connected (evaluation only) '''
+    
+#    df_eval_fc, df_fit_fc = parse_perf_log(log_file='../data/logs/log_min20_epochs100_fc_extended.txt')
+#    print(df_eval.head())
+#    plot_evaluation_performance(df_eval)
+    
+    ''' Plot % lethal vs KO size '''
+#    plot_lethal_ko_percents(limit=None)
+    
+    ''' Plot % positive/negative interactions vs KO size'''
+#    plot_interactions()
+    
+def plot_interactions(interactions_file='../data/logs/log_interactions.txt',
+                      single_plot=False):
+    ''' Plots percent of KOs with positive or negative interactions '''
+    KO_LIMIT = 10
+    PAIR_POSITIVE = [1.51, 2.49, 2.54, 2.32, 2.74] # double KO positive interactions
+    PAIR_NEGATIVE = [2.98, 3.30, 2.52, 2.52, 3.19] # double KO negative interactions
+
+    raw_values = []
+    for line in open(interactions_file, 'r+'):
+        if '>' == line[0]:
+            rate = line.split()[-1]
+            rate = float(rate[1:-2])
+            raw_values.append(rate)
+    n = len(raw_values); m = len(MODELS)
+    raw_values = np.array(raw_values)
+    raw_values = np.reshape(raw_values, (int(n/3),3)) 
+    raw_values = np.reshape(raw_values, (m,int(n/3/m),3))
+    
+    fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(6.5,4))
+    ko_range = np.arange(2, KO_LIMIT+1)
+    for i in range(m):
+        positive_interactions = [PAIR_POSITIVE[i]] + raw_values[i,:,1].tolist()
+        negative_interactions = [PAIR_NEGATIVE[i]] + raw_values[i,:,2].tolist()
+        axs[0].plot(ko_range, positive_interactions, label=MODELS[i])
+        axs[1].plot(ko_range, negative_interactions, label=MODELS[i])
+    axs[0].set_xlabel('KO size'); axs[0].set_ylabel('% Positive Interaction')
+    axs[1].set_xlabel('KO size'); axs[1].set_ylabel('% Negative Interaction')
+    axs[0].set_title('Positive Interactions')
+    axs[1].set_title('Negative Interactions')
+    axs[1].legend()
+    plt.tight_layout()
+            
+    
+def plot_lethal_ko_percents(lethal_count_file='../data/logs/log_lethal_200.txt',
+                            lethal_count_file2='../data/logs/log_lethal_201-500.txt',
+                            limit=None):
+    ''' Plots the percent of KOs being lethal vs. KO size. Combines data
+        from two logs. '''
     KO_START = 2; KO_LIMIT = 200; KO_LIMIT2 = 500
     SINGLE_KO = np.array([35, 73, 51, 36, 53]) / 784 * 100 # single KO lethal cases
         
@@ -47,30 +95,37 @@ def plot_lethal_ko_percents(lethal_count_file='../data/DCell_test/log_lethal_200
             count += 1
             if count > KO_LIMIT2:
                 count = KO_LIMIT + 1; model += 1
-                
+    
+    ''' Generate plot with concatenated data '''           
     lethal_rates[:,1] = SINGLE_KO
     ko_counts = np.arange(0,KO_LIMIT2+1)
     fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(6.5,4))
+    limit = limit if limit != None else len(ko_counts+1)
     for i in range(len(MODELS)):
-        ax.plot(ko_counts, lethal_rates[i,:], label=MODELS[i].replace('DCell','ConvNet'))
+        ax.plot(ko_counts[:limit], lethal_rates[i,:limit], label=MODELS[i].replace('DCell','ConvNet'))
     ax.set_title('% Lethal vs KO size')
     ax.legend()
     ax.set_ylabel('% Lethal')
     ax.set_xlabel('KO size')
     plt.tight_layout()
     
-def plot_evaluation_performance(eval_file='../data/DCell_test/evaluation.csv'):
+def plot_evaluation_performance_comparison(df_eval, df_eval_fc):
+    ''' Plots the MCC uring evaluation against different sized KOs 
+        for DCell-like models vs fully connected DCell models '''
+    df = df_eval
+
+    
+def plot_evaluation_performance(df_eval, start_ko=2, end_ko=15):
     ''' Plots the MCC and ACC during evaluation against different sized KOs '''
-    df = pd.read_csv(eval_file)
+    df = df_eval
     rows, cols = df.shape
-    KO_counts = range(2,15+1)
+    KO_counts = range(start_ko, end_ko+1)
     fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(6.5,3))
     for m in range(len(MODELS)):
         mcc = []; acc = []; label = MODELS[m]
-        for i in range(len(KO_counts)):
-            row_ind = len(KO_counts) * m + i
-            mcc.append(df.loc[row_ind, 'MCC'])
-            acc.append(df.loc[row_ind, 'ACC'])
+        row_ind = len(KO_counts) * m
+        mcc = df.loc[row_ind:row_ind+len(KO_counts)-1, 'MCC']
+        acc = df.loc[row_ind:row_ind+len(KO_counts)-1, 'ACC']
         axs[0].plot(KO_counts, mcc, label=label)
         axs[1].plot(KO_counts, acc, label=label)
     axs[0].set_title('MCC versus KO size')
@@ -82,14 +137,15 @@ def plot_evaluation_performance(eval_file='../data/DCell_test/evaluation.csv'):
     axs[1].set_xlabel('KO size')
     plt.tight_layout()
     
-def plot_training_performance(perf_file='../data/DCell_test/fitting.csv'):
+def plot_training_performance(df_fit, epochs=100):
     ''' Plots the MCC in the training and testing sets vs. epoch '''
-    df = pd.read_csv(perf_file, index_col=0)
+    df = df_fit
+    print(df.head())
     fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(6.5,3), sharey=True)
-    x = range(EPOCHS_IN_LOG + 1)
+    x = range(epochs + 1)
     for i in range(len(MODELS)):
-        training_mcc = df.values[:,i+len(MODELS)]
-        testing_mcc = df.values[:,i]
+        training_mcc = df.values[:,i+len(MODELS)+1]
+        testing_mcc = df.values[:,i+1]
         label = MODELS[i]
         axs[0].plot(x, training_mcc, label=label)
         axs[1].plot(x, testing_mcc, label=label)
@@ -101,9 +157,8 @@ def plot_training_performance(perf_file='../data/DCell_test/fitting.csv'):
     axs[1].set_xlabel('Epoch')
     plt.tight_layout()
     
-def parse_perf_log(log_file='../data/DCell_test/log_min20_epochs100_extended.txt',
-              out_eval_file='../data/DCell_test/evaluation.csv',
-              out_fit_file='../data/DCell_test/fitting.csv'):
+def parse_perf_log(log_file='../data/logs/log_min20_epochs100_extended.txt', 
+                   epochs=100, start_ko=2, end_ko=15):
     ''' Extract ACC and MCC curves for each model '''
     raw_values = []
     for line in open(log_file, 'r+'):
@@ -111,42 +166,39 @@ def parse_perf_log(log_file='../data/DCell_test/log_min20_epochs100_extended.txt
             value = line.split(':')[-1].strip()
             value = float(value) if '.' in value else int(value)
             raw_values.append(value)
-    print(raw_values)
-    max_KO = 15
-    KO_counts = range(2,max_KO+1)
-    df = pd.DataFrame(columns=['model', 'KO_order', 
+    KO_counts = range(start_ko, end_ko+1)
+    df_eval = pd.DataFrame(columns=['model', 'KO_order', 
         'MCC', 'ACC', 'TP', 'FP', 'FN', 'TN'])
     row_num = 0; model_ID = 0; KO_ID = 0
     for i in range(0,len(raw_values),6):
         model = MODELS[model_ID]
         KOcount = KO_counts[KO_ID]
-        df.loc[row_num] = [model, KOcount] + raw_values[i:i+6] 
+        df_eval.loc[row_num] = [model, KOcount] + raw_values[i:i+6] 
         row_num += 1; KO_ID += 1
         if KO_ID >= len(KO_counts):
             KO_ID = 0; model_ID += 1
-    df.to_csv(out_eval_file, sep=',', index=False)
-
+            
     ''' Extract testing and training MCC curves vs epoch '''
-    epochs = EPOCHS_IN_LOG
     training = []; testing = []
     for line in open(log_file, 'r+'):
         if 'Training MCC' in line:
             training.append( float(line.split()[2]) )
         elif 'Testing MCC' in line:
             testing.append( float(line.split()[2]) )
-    df = pd.DataFrame(columns=['epoch', 'A_test_mcc', 
+    df_fit = pd.DataFrame(columns=['epoch', 'A_test_mcc', 
                        'B_test_mcc', 'C_test_mcc', 
                        'D_test_mcc', 'E_test_mcc',
                        'A_train_mcc', 'B_train_mcc',
                        'C_train_mcc', 'D_train_mcc',
                        'E_train_mcc'])
-    df.loc[0] = [0,0,0,0,0,0,0,0,0,0,0]
+    df_fit.loc[0] = [0,0,0,0,0,0,0,0,0,0,0]
     for i in range(epochs):
         training_mccs = map(lambda x: training[i+epochs*x], range(len(MODELS)))
         testing_mccs = map(lambda x: testing[i+epochs*x], range(len(MODELS)))
         row = [i+1] + list(testing_mccs) + list(training_mccs)
-        df.loc[i+1] = row
-    df.to_csv(out_fit_file, sep=',', index=False)
+        df_fit.loc[i+1] = row
+    
+    return df_eval, df_fit
   
     
 def plot_pairwise_interaction():
